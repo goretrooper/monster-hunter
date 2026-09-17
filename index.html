@@ -23,6 +23,9 @@
   button:active { transform: translateY(3px); box-shadow: 0 1px 0 #000; }
   button.secondary { background: #4cc9f0; }
   button:disabled { opacity: .5; }
+  .lenBtns { display: flex; gap: .5em; }
+  .lenBtns button { flex: 1; padding: .5em; }
+  .lenBtns button.sel { background: #b5e853; }
   .small { color: #bbb; font-size: .9em; text-align: center; }
   .code { font-size: 2.2em; letter-spacing: .25em; font-weight: bold; color: #ffd166; text-align: center; }
   .team { border: 3px solid; border-radius: 1em; padding: .5em .8em; background: rgba(0,0,0,.3); }
@@ -62,16 +65,23 @@
   <input id="code" placeholder="Raumcode" maxlength="4" autocapitalize="characters" autocomplete="off">
   <button class="secondary" onclick="join()">Beitreten</button>
   <p id="status" class="small"></p>
-  <p class="small">2 Spieler = 1 Monster: einer steuert, einer legt Minen und schießt den Fangarm. Bis zu 8 Spieler.</p>
+  <p class="small">2 Spieler = 1 Monster: einer steuert, einer legt Minen und schießt den Fangarm. Bis zu 8 Spieler. Achtung vor Raketen! 🚀</p>
 </section>
 
 <section id="s-wait" class="screen">
   <div class="small">Raumcode</div><div class="code" id="showCode"></div>
+  <div id="youName" class="small"></div>
   <div id="myRole">…</div>
   <div id="roster"></div>
   <div id="hostBtns" style="display:none">
     <button class="secondary" onclick="shuffleTeams()">🔀 Teams mischen</button>
-    <button id="startBtn" onclick="startGame()">▶ Spiel starten (3 Min)</button>
+    <p class="small" style="margin:.6em 0 .3em">Spieldauer</p>
+    <div class="lenBtns">
+      <button class="secondary" id="len3" onclick="setLen(3)">3 Min</button>
+      <button class="secondary" id="len4" onclick="setLen(4)">4 Min</button>
+      <button class="secondary" id="len5" onclick="setLen(5)">5 Min</button>
+    </div>
+    <button id="startBtn" onclick="startGame()" style="margin-top:.6em">▶ Spiel starten (3 Min)</button>
   </div>
   <p id="waitNote" class="small">Warten auf den Host…</p>
 </section>
@@ -99,8 +109,10 @@
 <script>
 'use strict';
 // ================= Konstanten =================
-const PREFIX = 'goregoroth-', MAX = 8, ROUND = 180, TICK = 50, COUNT = 3;
+const PREFIX = 'goregoroth-', MAX = 8, TICK = 50, COUNT = 3;
+let ROUND = 180;                                   // Spieldauer in Sekunden (Host wählt 3/4/5 Min)
 const W = 1500, H = 2100, CANDY_N = 80, BASE_MASS = 100, MAX_MINES = 4;
+const ROCKET_SPEED = 700, ROCKET_WARN = 1.6, ROCKET_MIN = 12, ROCKET_MAX = 25, ROCKET_PENALTY = 30;
 const MONSTER_NAMES = ['Glibber', 'Zottel', 'Knurps', 'Blubb', 'Schmatz', 'Grummel', 'Fussel', 'Mampf'];
 const COLORS = ['#ff5c8a', '#4cc9f0', '#b5e853', '#ffb703', '#c77dff', '#ff8c42', '#06d6a0', '#f1f1f1'];
 const CANDY_COLORS = ['#ff4d6d', '#ffd166', '#06d6a0', '#4cc9f0', '#c77dff', '#ff9f1c'];
@@ -108,7 +120,7 @@ const $ = id => document.getElementById(id);
 const rnd = (a, b) => a + Math.random() * (b - a);
 const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
 const radiusOf = m => 18 + Math.sqrt(m) * 2.2;
-const speedOf = m => Math.max(90, 230 * Math.pow(BASE_MASS / m, 0.25));
+const speedOf = m => Math.max(60, 230 * Math.pow(BASE_MASS / m, 0.35));   // groß = deutlich langsamer
 const d2 = (a, b) => (a.x - b.x) ** 2 + (a.y - b.y) ** 2;
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const roleText = r => r === 'pilot' ? '🕹️ Du steuerst die Bewegung' : r === 'gunner' ? '💣 Du legst Minen & schießt den Fangarm' : '🕹️💣 Du machst alles';
@@ -118,23 +130,27 @@ let peer = null, isHost = false, hostConn = null, myName = '';
 let me = { tid: -1, role: null, running: false };
 const conns = {}, players = {}; let order = [];   // nur Host
 let setup = { teams: [] };
+let BLOCKS = [];                                   // Hindernisse [x, y, w, h]
 let inGame = false, S = null, simTimer = null;
 
 function show(id) { document.querySelectorAll('.screen').forEach(s => s.classList.remove('active')); $(id).classList.add('active'); }
 function setStatus(t) { $('status').textContent = t; }
+function readName() { const n = $('name').value.trim().slice(0, 12); if (!n) { setStatus('Bitte zuerst einen Namen eingeben'); $('name').focus(); } return n; }
 async function keepAwake() { try { await navigator.wakeLock?.request('screen'); } catch (e) { } }
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') keepAwake(); });
 
 // ================= Host: Verbindung & Lobby =================
 function host() {
-  myName = ($('name').value.trim() || 'Host').slice(0, 12); isHost = true;
+  const n = readName(); if (!n) return;
+  myName = n; isHost = true;
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; let code = '';
   for (let i = 0; i < 4; i++) code += chars[Math.floor(Math.random() * chars.length)];
   setStatus('Verbinde mit Server…');
   peer = new Peer(PREFIX + code);
   peer.on('open', () => {
     players.me = { name: myName, tid: -1, role: null }; order = ['me'];
-    $('showCode').textContent = code; $('hostBtns').style.display = 'block';
+    $('showCode').textContent = code; $('youName').textContent = 'Du: ' + myName + ' (Host)';
+    $('hostBtns').style.display = 'block'; setLen(3);
     $('waitNote').textContent = 'Sag den Code an. Wenn alle da sind: Spiel starten.';
     $('againBtn').style.display = 'block'; $('endNote').textContent = '';
     rebuildTeams(); show('s-wait'); keepAwake();
@@ -148,6 +164,12 @@ function host() {
     c.on('close', () => playerLeft(c.peer));
   });
   peer.on('error', e => setStatus('Fehler: ' + e.type));
+}
+function setLen(min) {
+  if (!isHost || inGame) return;
+  ROUND = min * 60;
+  [3, 4, 5].forEach(k => $('len' + k).classList.toggle('sel', k === min));
+  $('startBtn').textContent = '▶ Spiel starten (' + min + ' Min)';
 }
 
 function handleFromClient(id, msg) {
@@ -197,15 +219,16 @@ function broadcast(msg) { for (const id in conns) { const c = conns[id]; if (c.o
 
 // ================= Mitspieler: Verbindung =================
 function join() {
-  myName = ($('name').value.trim() || 'Spieler').slice(0, 12);
+  const n = readName(); if (!n) return;
+  myName = n;
   const code = $('code').value.trim().toUpperCase();
-  if (code.length !== 4) { setStatus('Bitte 4-stelligen Code eingeben'); return; }
+  if (code.length !== 4) { setStatus('Bitte 4-stelligen Raumcode eingeben'); return; }
   setStatus('Verbinde mit Server…');
   peer = new Peer();
   peer.on('open', () => {
     setStatus('Suche Raum ' + code + '…');
     hostConn = peer.connect(PREFIX + code, { reliable: true });
-    hostConn.on('open', () => { hostConn.send({ type: 'join', name: myName }); $('showCode').textContent = code; show('s-wait'); keepAwake(); });
+    hostConn.on('open', () => { hostConn.send({ type: 'join', name: myName }); $('showCode').textContent = code; $('youName').textContent = 'Du: ' + myName; show('s-wait'); keepAwake(); });
     hostConn.on('data', d => handleFromHost(d));
     hostConn.on('close', () => { alert('Verbindung zum Host verloren'); location.reload(); });
   });
@@ -216,7 +239,7 @@ function handleFromHost(msg) {
   switch (msg.type) {
     case 'full': alert('Der Raum ist voll (8 Spieler)'); location.reload(); break;
     case 'setup': applySetup(msg); break;
-    case 'start': onStart(); break;
+    case 'start': onStart(msg); break;
     case 'snap': if (inGame) applySnap(msg); break;
     case 'end': onEnd(msg); break;
   }
@@ -241,36 +264,69 @@ function renderRoster() {
 }
 
 // ================= Host: Simulation =================
+function genBlocks() {
+  const out = []; let tries = 0;
+  while (out.length < 4 && tries++ < 300) {
+    const w = rnd(90, 260), h = rnd(90, 260);
+    const b = [Math.round(rnd(150, W - 150 - w)), Math.round(rnd(150, H - 150 - h)), Math.round(w), Math.round(h)];
+    if (out.every(o => b[0] > o[0] + o[2] + 200 || b[0] + b[2] + 200 < o[0] || b[1] > o[1] + o[3] + 200 || b[1] + b[3] + 200 < o[1])) out.push(b);
+  }
+  return out;
+}
+function inBlock(x, y, pad) { return BLOCKS.some(b => x > b[0] - pad && x < b[0] + b[2] + pad && y > b[1] - pad && y < b[1] + b[3] + pad); }
+function pushOutOfBlocks(T, r) {
+  for (const b of BLOCKS) {
+    const cx = clamp(T.x, b[0], b[0] + b[2]), cy = clamp(T.y, b[1], b[1] + b[3]);
+    const dx = T.x - cx, dy = T.y - cy, d = Math.hypot(dx, dy);
+    if (d >= r) continue;
+    if (d < 0.001) {
+      const l = T.x - b[0], rr = b[0] + b[2] - T.x, tt = T.y - b[1], bb = b[1] + b[3] - T.y, m = Math.min(l, rr, tt, bb);
+      if (m === l) T.x = b[0] - r; else if (m === rr) T.x = b[0] + b[2] + r; else if (m === tt) T.y = b[1] - r; else T.y = b[1] + b[3] + r;
+      T.vx *= 0.2; T.vy *= 0.2;
+    } else {
+      T.x = cx + dx / d * r; T.y = cy + dy / d * r;
+      if (Math.abs(dx) > Math.abs(dy)) T.vx *= 0.2; else T.vy *= 0.2;
+    }
+  }
+}
+
 function startGame() {
   if (!isHost || inGame || !setup.teams.length) return;
   inGame = true;
-  S = { t: 0, state: 'count', playStart: 0, nextId: 1, candies: [], mines: [], ev: [], teams: [] };
+  BLOCKS = genBlocks();
+  S = { t: 0, state: 'count', playStart: 0, nextId: 1, candies: [], mines: [], rockets: [], nextRocket: 0, ev: [], teams: [] };
   for (const st of setup.teams) {
     const T = { tid: st.tid, x: 0, y: 0, vx: 0, vy: 0, mx: 0, my: 0, mass: BASE_MASS, alive: true, respawnAt: 0, score: 0, surv: 0,
       mineCd: 0, tentCd: 0, tent: null, face: 'ok', faceUntil: 0, gone: false };
     placeRandom(T); S.teams.push(T);
   }
   while (S.candies.length < CANDY_N) spawnCandy();
-  broadcast({ type: 'start' }); onStart();
+  const startMsg = { type: 'start', blocks: BLOCKS, round: ROUND };
+  broadcast(startMsg); onStart(startMsg);
   clearInterval(simTimer);
   simTimer = setInterval(hostTick, TICK);
 }
 function hostTick() { if (!S || S.state === 'end') return; simTick(TICK / 1000); if (S.state === 'end') return; const snap = makeSnap(); broadcast(snap); applySnap(snap); }
 function placeRandom(T) {
-  for (let k = 0; k < 20; k++) {
+  const r = radiusOf(T.mass);
+  for (let k = 0; k < 40; k++) {
     T.x = rnd(120, W - 120); T.y = rnd(120, H - 120);
-    if (S.teams.every(o => o === T || !o.alive || d2(o, T) > 350 * 350)) break;
+    if (!inBlock(T.x, T.y, r + 30) && S.teams.every(o => o === T || !o.alive || d2(o, T) > 350 * 350)) break;
   }
 }
 function spawnCandy(x, y) {
-  S.candies.push({ id: S.nextId++, x: x ?? rnd(40, W - 40), y: y ?? rnd(40, H - 40), k: Math.floor(rnd(0, CANDY_COLORS.length)) });
+  let px = x, py = y;
+  if (px === undefined || inBlock(px, py, 25)) {
+    for (let k = 0; k < 15; k++) { px = rnd(40, W - 40); py = rnd(40, H - 40); if (!inBlock(px, py, 25)) break; }
+  }
+  S.candies.push({ id: S.nextId++, x: px, y: py, k: Math.floor(rnd(0, CANDY_COLORS.length)) });
 }
 function setFace(T, f, dur) { T.face = f; T.faceUntil = S.t + dur; }
 
 function simTick(dt) {
   S.t += dt;
   S.teams = S.teams.filter(t => !t.gone);
-  if (S.state === 'count') { if (S.t >= COUNT) { S.state = 'play'; S.playStart = S.t; } return; }
+  if (S.state === 'count') { if (S.t >= COUNT) { S.state = 'play'; S.playStart = S.t; S.nextRocket = S.t + rnd(ROCKET_MIN, ROCKET_MAX); } return; }
   if (ROUND - (S.t - S.playStart) <= 0) { endGame(); return; }
   for (const T of S.teams) {
     T.mineCd = Math.max(0, T.mineCd - dt); T.tentCd = Math.max(0, T.tentCd - dt);
@@ -282,6 +338,7 @@ function simTick(dt) {
     T.x += T.vx * dt; T.y += T.vy * dt;
     const r = radiusOf(T.mass);
     T.x = clamp(T.x, r, W - r); T.y = clamp(T.y, r, H - r);
+    pushOutOfBlocks(T, r);
     for (let i = S.candies.length - 1; i >= 0; i--) { const c = S.candies[i]; if (d2(T, c) < r * r) eatCandy(T, i); }
     for (let i = S.mines.length - 1; i >= 0; i--) { const m = S.mines[i]; if (m.tid !== T.tid && S.t >= m.armedAt && d2(T, m) < (r + 12) ** 2) { explode(T, i); break; } }
     if (T.tent) updateTent(T, dt);
@@ -292,6 +349,7 @@ function simTick(dt) {
     if (A.mass > B.mass * 1.2 && d < rA - rB * 0.5) eatMonster(A, B);
     else if (B.mass > A.mass * 1.2 && d < rB - rA * 0.5) eatMonster(B, A);
   }
+  updateRockets(dt);
   while (S.candies.length < CANDY_N) spawnCandy();
 }
 function eatCandy(T, i) {
@@ -305,6 +363,10 @@ function eatMonster(A, B) {
   S.ev.push({ e: 'eat', x: Math.round(B.x), y: Math.round(B.y), c: B.tid, by: A.tid });
 }
 function respawn(T) { T.alive = true; T.mass = BASE_MASS; T.vx = T.vy = 0; T.tent = null; T.face = 'ok'; placeRandom(T); }
+function spillCandy(T, lost, maxN) {
+  const r = radiusOf(T.mass), n = Math.min(maxN, Math.floor(lost / 8));
+  for (let k = 0; k < n; k++) { const a = rnd(0, Math.PI * 2), d = r + rnd(40, 120); spawnCandy(clamp(T.x + Math.cos(a) * d, 30, W - 30), clamp(T.y + Math.sin(a) * d, 30, H - 30)); }
+}
 function dropMine(T) {
   if (!T.alive || T.mineCd > 0 || S.state !== 'play') return;
   if (S.mines.filter(m => m.tid === T.tid).length >= MAX_MINES) return;
@@ -314,13 +376,45 @@ function dropMine(T) {
 }
 function explode(T, i) {
   const m = S.mines[i]; S.mines.splice(i, 1);
-  const lost = T.mass * 0.35; T.mass = Math.max(50, T.mass - lost);
-  const r = radiusOf(T.mass), n = Math.min(8, Math.floor(lost / 8));
-  for (let k = 0; k < n; k++) { const a = rnd(0, Math.PI * 2), d = r + rnd(40, 110); spawnCandy(clamp(T.x + Math.cos(a) * d, 30, W - 30), clamp(T.y + Math.sin(a) * d, 30, H - 30)); }
+  const lost = T.mass * 0.35; T.mass = Math.max(50, T.mass - lost); spillCandy(T, lost, 8);
   const O = S.teams.find(o => o.tid === m.tid); if (O) O.score += 20;
   const dx = T.x - m.x, dy = T.y - m.y, dd = Math.hypot(dx, dy) || 1; T.vx = dx / dd * 400; T.vy = dy / dd * 400;
   setFace(T, 'hit', 1); S.ev.push({ e: 'boom', x: Math.round(m.x), y: Math.round(m.y), v: T.tid });
 }
+// ---- Raketen ----
+function updateRockets(dt) {
+  if (S.t >= S.nextRocket) { spawnRocket(); S.nextRocket = S.t + rnd(ROCKET_MIN, ROCKET_MAX); }
+  for (let i = S.rockets.length - 1; i >= 0; i--) {
+    const R = S.rockets[i];
+    if (R.phase === 'warn') { if (S.t >= R.flyAt) R.phase = 'fly'; continue; }
+    R.p += R.dir * ROCKET_SPEED * dt;
+    const x = R.axis ? R.fixed : R.p, y = R.axis ? R.p : R.fixed;
+    for (const T of S.teams) {
+      if (!T.alive || R.hit.includes(T.tid)) continue;
+      const r = radiusOf(T.mass);
+      if ((T.x - x) ** 2 + (T.y - y) ** 2 < (r + 16) ** 2) rocketHit(T, R, x, y);
+    }
+    const lim = R.axis ? H : W;
+    if (R.p < -100 || R.p > lim + 100) S.rockets.splice(i, 1);
+  }
+}
+function spawnRocket() {
+  const axis = Math.random() < 0.5 ? 0 : 1;          // 0 = fliegt horizontal, 1 = vertikal
+  const alive = S.teams.filter(t => t.alive); let fixed;
+  if (alive.length && Math.random() < 0.6) { const T = alive[Math.floor(Math.random() * alive.length)]; fixed = axis ? T.x : T.y; }
+  else fixed = axis ? rnd(100, W - 100) : rnd(100, H - 100);
+  const dir = Math.random() < 0.5 ? 1 : -1, lim = axis ? H : W;
+  S.rockets.push({ axis, fixed: Math.round(fixed), p: dir > 0 ? -80 : lim + 80, dir, phase: 'warn', flyAt: S.t + ROCKET_WARN, hit: [] });
+}
+function rocketHit(T, R, x, y) {
+  R.hit.push(T.tid);
+  const lost = T.mass / 2; T.mass = Math.max(50, T.mass - lost); T.score = Math.max(0, T.score - ROCKET_PENALTY);
+  spillCandy(T, lost, 10);
+  if (R.axis) T.vx = (T.x >= x ? 1 : -1) * 350; else T.vy = (T.y >= y ? 1 : -1) * 350;
+  T.tent = null; setFace(T, 'hit', 1.2);
+  S.ev.push({ e: 'rocket', x: Math.round(T.x), y: Math.round(T.y), v: T.tid });
+}
+// ---- Fangarm ----
 function fireTent(T, dx, dy) {
   if (!T.alive || T.tent || T.tentCd > 0 || S.state !== 'play') return;
   const l = Math.hypot(dx, dy); if (l < 0.01) return;
@@ -333,7 +427,7 @@ function updateTent(T, dt) {
     const tip = { x: t.tx, y: t.ty };
     for (let i = S.candies.length - 1; i >= 0; i--) if (d2(S.candies[i], tip) < 20 * 20) eatCandy(T, i);
     for (const O of S.teams) if (O !== T && O.alive && d2(O, tip) < radiusOf(O.mass) ** 2) { t.phase = 'pull'; t.hook = O.tid; t.pullUntil = S.t + 1.0; break; }
-    if (t.phase === 'out' && (t.len >= t.max || t.tx < 0 || t.tx > W || t.ty < 0 || t.ty > H)) t.phase = 'in';
+    if (t.phase === 'out' && (t.len >= t.max || t.tx < 0 || t.tx > W || t.ty < 0 || t.ty > H || inBlock(t.tx, t.ty, 0))) t.phase = 'in';
   } else if (t.phase === 'pull') {
     const O = S.teams.find(o => o.tid === t.hook);
     if (!O || !O.alive || S.t > t.pullUntil) { t.phase = 'in'; }
@@ -357,6 +451,7 @@ function makeSnap() {
       tip: T.tent ? [Math.round(T.tent.tx), Math.round(T.tent.ty)] : null })),
     cand: S.candies.map(c => [c.id, Math.round(c.x), Math.round(c.y), c.k]),
     mines: S.mines.map(m => [Math.round(m.x), Math.round(m.y), m.tid, S.t >= m.armedAt ? 1 : 0]),
+    rk: S.rockets.map(R => [R.axis, R.fixed, Math.round(R.p), R.dir, R.phase === 'fly' ? 1 : 0]),
     ev: S.ev };
   S.ev = []; return snap;
 }
@@ -375,12 +470,13 @@ function endGame() {
 function backToLobby() { if (!isHost) return; S = null; rebuildTeams(); show('s-wait'); }
 
 // ================= Gemeinsam: Spielansicht =================
-const V = { teams: {}, cand: [], mines: [], left: 0, st: 'count', parts: [], texts: [], shake: 0, ready: false };
+const V = { teams: {}, cand: [], mines: [], rk: [], left: 0, st: 'count', parts: [], texts: [], shake: 0, ready: false };
 let cv, ctx, cw = 0, ch = 0, dpr = 1, rafOn = false, lastFrame = 0;
 const sticks = { move: null, aim: null };
 
-function onStart() {
-  inGame = true; V.teams = {}; V.parts = []; V.texts = []; V.ready = false; V.shake = 0;
+function onStart(msg) {
+  if (msg) { if (Array.isArray(msg.blocks)) BLOCKS = msg.blocks; if (msg.round) ROUND = msg.round; }
+  inGame = true; V.teams = {}; V.parts = []; V.texts = []; V.rk = []; V.ready = false; V.shake = 0;
   sticks.move = sticks.aim = null;
   show('s-game'); resizeCanvas();
   $('mineBtn').style.display = me.role === 'pilot' ? 'none' : 'block';
@@ -395,24 +491,30 @@ function onEnd(msg) {
   show('s-end');
 }
 function applySnap(s) {
-  V.ready = true; V.st = s.st; V.left = s.left; V.cand = s.cand; V.mines = s.mines; const seen = {};
+  V.ready = true; V.st = s.st; V.left = s.left; V.cand = s.cand; V.mines = s.mines; V.rk = s.rk || []; const seen = {};
   for (const t of s.teams) {
     seen[t.i] = 1; let v = V.teams[t.i];
     const info = setup.teams.find(x => x.tid === t.i) || { name: '?', color: '#fff', members: [] };
     if (!v || Math.hypot(v.x - t.x, v.y - t.y) > 250) v = V.teams[t.i] = { x: t.x, y: t.y, r: radiusOf(t.m), seed: t.i * 1.7, tipx: 0, tipy: 0, tipWas: 0 };
-    Object.assign(v, { tid: t.i, tx: t.x, ty: t.y, tr: radiusOf(t.m), m: t.m, a: t.a, s: t.s, f: t.f, vx: t.vx, vy: t.vy, mc: t.mc, tc: t.tc, rs: t.rs, tip: t.tip, name: info.name, color: info.color });
+    Object.assign(v, { tid: t.i, tx: t.x, ty: t.y, tr: radiusOf(t.m), m: t.m, a: t.a, s: t.s, f: t.f, vx: t.vx, vy: t.vy, mc: t.mc, tc: t.tc, rs: t.rs, tip: t.tip,
+      name: info.name, color: info.color, members: info.members || [] });
     if (t.tip && !v.tipWas) { v.tipx = t.tip[0]; v.tipy = t.tip[1]; } v.tipWas = t.tip ? 1 : 0;
   }
   for (const k in V.teams) if (!seen[k]) delete V.teams[k];
   for (const e of s.ev) fx(e);
   updateHud();
 }
+function burst(x, y, n, col, spd, life, smin, smax) {
+  for (let i = 0; i < n; i++) V.parts.push({ x, y, vx: rnd(-spd, spd), vy: rnd(-spd, spd), life, c: typeof col === 'function' ? col(i) : col, s: rnd(smin, smax) });
+}
 function fx(e) {
   if (e.e === 'candy') { for (let i = 0; i < 6; i++) V.parts.push({ x: e.x, y: e.y, vx: rnd(-120, 120), vy: rnd(-160, 40), life: .5, c: CANDY_COLORS[e.c] || '#fff', s: rnd(3, 6) }); }
-  if (e.e === 'eat') { const col = COLORS[e.c] || '#fff'; for (let i = 0; i < 26; i++) V.parts.push({ x: e.x, y: e.y, vx: rnd(-300, 300), vy: rnd(-300, 300), life: .9, c: col, s: rnd(5, 12) });
+  if (e.e === 'eat') { burst(e.x, e.y, 26, COLORS[e.c] || '#fff', 300, .9, 5, 12);
     V.texts.push({ x: e.x, y: e.y - 40, t: 'MAMPF!', life: 1.2, c: '#ffd166' }); if (e.c === me.tid) V.shake = 12; }
-  if (e.e === 'boom') { for (let i = 0; i < 30; i++) V.parts.push({ x: e.x, y: e.y, vx: rnd(-350, 350), vy: rnd(-350, 350), life: .8, c: i % 3 ? '#ff9f1c' : '#444', s: rnd(4, 11) });
+  if (e.e === 'boom') { burst(e.x, e.y, 30, i => i % 3 ? '#ff9f1c' : '#444', 350, .8, 4, 11);
     V.texts.push({ x: e.x, y: e.y - 30, t: 'BOOM!', life: 1.2, c: '#ff5c8a' }); if (e.v === me.tid) V.shake = 16; }
+  if (e.e === 'rocket') { burst(e.x, e.y, 40, i => i % 4 === 0 ? '#fff' : i % 4 === 1 ? '#ff3b3b' : '#ff9f1c', 420, .9, 5, 14);
+    V.texts.push({ x: e.x, y: e.y - 40, t: 'HALBIERT! −30', life: 1.5, c: '#ff3b3b' }); if (e.v === me.tid) V.shake = 22; }
 }
 function updateHud() {
   const l = Math.max(0, V.st === 'count' ? ROUND : V.left);
@@ -443,6 +545,8 @@ function frame(now) {
   const dt = Math.min(0.05, (now - lastFrame) / 1000 || 0.016); lastFrame = now; const tm = now / 1000;
   for (const k in V.teams) { const v = V.teams[k]; v.x += (v.tx - v.x) * .35; v.y += (v.ty - v.y) * .35; v.r += (v.tr - v.r) * .2;
     if (v.tip) { v.tipx += (v.tip[0] - v.tipx) * .5; v.tipy += (v.tip[1] - v.tipy) * .5; } }
+  for (const k of V.rk) if (k[4]) { const x = k[0] ? k[1] : k[2], y = k[0] ? k[2] : k[1];
+    V.parts.push({ x: x - (k[0] ? 0 : k[3] * 55), y: y - (k[0] ? k[3] * 55 : 0), vx: rnd(-40, 40), vy: rnd(-40, 40), life: .6, c: 'rgba(210,210,210,.7)', s: rnd(6, 13) }); }
   V.parts = V.parts.filter(p => (p.life -= dt) > 0); for (const p of V.parts) { p.x += p.vx * dt; p.y += p.vy * dt; p.vy += 300 * dt; }
   V.texts = V.texts.filter(p => (p.life -= dt) > 0); for (const p of V.texts) p.y -= 40 * dt;
   V.shake = Math.max(0, V.shake - 30 * dt);
@@ -457,11 +561,14 @@ function frame(now) {
   ctx.fillStyle = '#2a1650'; ctx.fillRect(0, 0, W, H);
   ctx.fillStyle = 'rgba(255,255,255,.07)'; for (let x = 60; x < W; x += 120) for (let y = 60; y < H; y += 120) { ctx.beginPath(); ctx.arc(x, y, 5, 0, 7); ctx.fill(); }
   ctx.lineWidth = 12; ctx.strokeStyle = '#ffd166'; ctx.setLineDash([30, 20]); ctx.strokeRect(0, 0, W, H); ctx.setLineDash([]);
+  for (const b of BLOCKS) drawBlock(b);
   for (const c of V.cand) drawCandy(c, tm);
   for (const m of V.mines) drawMine(m, tm);
+  for (const k of V.rk) if (!k[4]) drawRocket(k, tm);
   for (const k in V.teams) { const v = V.teams[k]; if (v.a && v.tip) drawTent(v, tm); }
   const sorted = Object.values(V.teams).sort((a, b) => a.r - b.r);
   for (const v of sorted) if (v.a) drawMonster(v, tm);
+  for (const k of V.rk) if (k[4]) drawRocket(k, tm);
   for (const p of V.parts) { ctx.globalAlpha = Math.min(1, p.life * 2); ctx.fillStyle = p.c; ctx.beginPath(); ctx.arc(p.x, p.y, p.s, 0, 7); ctx.fill(); } ctx.globalAlpha = 1;
   for (const p of V.texts) { ctx.font = 'bold 44px "Comic Sans MS", sans-serif'; ctx.textAlign = 'center'; ctx.lineWidth = 8; ctx.strokeStyle = '#000'; ctx.fillStyle = p.c;
     ctx.globalAlpha = Math.min(1, p.life); ctx.strokeText(p.t, p.x, p.y); ctx.fillText(p.t, p.x, p.y); } ctx.globalAlpha = 1;
@@ -470,6 +577,39 @@ function frame(now) {
   ctx.restore();
   for (const s of [sticks.move, sticks.aim]) if (s) { ctx.strokeStyle = 'rgba(255,255,255,.4)'; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(s.ox, s.oy, 55, 0, 7); ctx.stroke();
     const v = stickVec(s); ctx.fillStyle = s === sticks.aim ? 'rgba(255,92,138,.7)' : 'rgba(255,209,102,.7)'; ctx.beginPath(); ctx.arc(s.ox + v.x * 55, s.oy + v.y * 55, 26, 0, 7); ctx.fill(); }
+}
+function drawBlock(b) {
+  const [x, y, w, h] = b;
+  ctx.fillStyle = 'rgba(0,0,0,.35)'; ctx.fillRect(x + 10, y + 12, w, h);
+  ctx.fillStyle = '#5a4a8f'; ctx.strokeStyle = '#1a1a2e'; ctx.lineWidth = 6; ctx.lineJoin = 'round';
+  ctx.fillRect(x, y, w, h); ctx.strokeRect(x, y, w, h);
+  ctx.fillStyle = 'rgba(255,255,255,.18)'; ctx.fillRect(x + 8, y + 8, w - 16, 14);
+  ctx.strokeStyle = 'rgba(0,0,0,.35)'; ctx.lineWidth = 3;
+  const s = (x * 7 + y * 13) % 50;                       // feste "Zufalls"-Risse pro Block
+  ctx.beginPath(); ctx.moveTo(x + 20 + s, y + h * .5); ctx.lineTo(x + 45 + s, y + h * .62); ctx.lineTo(x + 40 + s, y + h * .8);
+  ctx.moveTo(x + w - 30 - s * .5, y + 30); ctx.lineTo(x + w - 50 - s * .5, y + 55); ctx.stroke();
+  ctx.fillStyle = 'rgba(0,0,0,.18)'; ctx.beginPath(); ctx.arc(x + w * .7, y + h * .65, Math.min(w, h) * .12, 0, 7); ctx.fill();
+}
+function drawRocket(k, tm) {
+  const [axis, fixed, p, dir, fly] = k;
+  if (!fly) {
+    if (Math.sin(tm * 14) > -0.3) { ctx.setLineDash([26, 18]); ctx.lineWidth = 6; ctx.strokeStyle = 'rgba(255,60,60,.75)'; ctx.beginPath();
+      if (axis) { ctx.moveTo(fixed, 0); ctx.lineTo(fixed, H); } else { ctx.moveTo(0, fixed); ctx.lineTo(W, fixed); } ctx.stroke(); ctx.setLineDash([]); }
+    const ex = axis ? fixed : (dir > 0 ? 70 : W - 70), ey = axis ? (dir > 0 ? 70 : H - 70) : fixed;
+    ctx.font = 'bold 64px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('⚠️', ex, ey); ctx.textBaseline = 'alphabetic';
+    return;
+  }
+  const x = axis ? fixed : p, y = axis ? p : fixed;
+  ctx.save(); ctx.translate(x, y); ctx.rotate(axis ? (dir > 0 ? Math.PI / 2 : -Math.PI / 2) : (dir > 0 ? 0 : Math.PI));
+  ctx.fillStyle = '#ff9f1c'; ctx.beginPath(); ctx.moveTo(-40, 0); ctx.lineTo(-52, -14 - Math.random() * 8); ctx.lineTo(-64 - Math.random() * 16, 0); ctx.lineTo(-52, 14 + Math.random() * 8); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = '#ffd166'; ctx.beginPath(); ctx.moveTo(-40, 0); ctx.lineTo(-48, -6); ctx.lineTo(-56 - Math.random() * 8, 0); ctx.lineTo(-48, 6); ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = '#1a1a2e'; ctx.lineWidth = 3; ctx.fillStyle = '#e63946';
+  ctx.beginPath(); ctx.moveTo(-38, -12); ctx.lineTo(-52, -26); ctx.lineTo(-24, -12); ctx.closePath(); ctx.fill(); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(-38, 12); ctx.lineTo(-52, 26); ctx.lineTo(-24, 12); ctx.closePath(); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = '#eee'; ctx.beginPath(); ctx.moveTo(-40, -12); ctx.lineTo(20, -12); ctx.quadraticCurveTo(50, 0, 20, 12); ctx.lineTo(-40, 12); ctx.closePath(); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = '#e63946'; ctx.beginPath(); ctx.moveTo(20, -12); ctx.quadraticCurveTo(50, 0, 20, 12); ctx.closePath(); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = '#4cc9f0'; ctx.beginPath(); ctx.arc(-4, 0, 6, 0, 7); ctx.fill(); ctx.stroke();
+  ctx.restore();
 }
 function drawCandy(c, tm) {
   const col = CANDY_COLORS[c[3]] || '#fff'; ctx.save(); ctx.translate(c[1], c[2]); ctx.rotate(c[0] % 6 + Math.sin(tm * 2 + c[0]) * .15);
@@ -517,9 +657,12 @@ function drawMonster(v, tm) {
     ctx.fillStyle = '#fff'; for (let i = -2; i <= 2; i++) { const tx = i * r * .18; ctx.beginPath(); ctx.moveTo(tx - r * .07, r * .3); ctx.lineTo(tx + r * .07, r * .3); ctx.lineTo(tx, r * .48); ctx.closePath(); ctx.fill(); }
     if (v.f === 'yum') { ctx.fillStyle = '#ff6b9d'; ctx.beginPath(); ctx.ellipse(r * .12, r * .62, r * .14, r * .18, 0, 0, 7); ctx.fill(); } }
   ctx.restore();
-  ctx.font = 'bold 22px "Comic Sans MS", sans-serif'; ctx.textAlign = 'center'; ctx.lineWidth = 5; ctx.strokeStyle = '#000'; ctx.fillStyle = v.color;
+  ctx.textAlign = 'center'; ctx.strokeStyle = '#000';
+  ctx.font = 'bold 22px "Comic Sans MS", sans-serif'; ctx.lineWidth = 5; ctx.fillStyle = v.color;
   const label = (v.tid === me.tid ? '★ ' : '') + v.name + ' · ' + v.m;
   ctx.strokeText(label, v.x, v.y + v.r + 30); ctx.fillText(label, v.x, v.y + v.r + 30);
+  if (v.members && v.members.length) { ctx.font = '15px "Comic Sans MS", sans-serif'; ctx.lineWidth = 4; ctx.fillStyle = '#fff';
+    const who = v.members.join(' & '); ctx.strokeText(who, v.x, v.y + v.r + 50); ctx.fillText(who, v.x, v.y + v.r + 50); }
 }
 
 // ---------- Steuerung ----------
