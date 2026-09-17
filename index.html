@@ -1,0 +1,542 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Goregoroth's Monster Hunter</title>
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<style>
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; overflow: hidden; position: fixed; width: 100%;
+    font-family: "Comic Sans MS", "Chalkboard SE", "Marker Felt", system-ui, sans-serif;
+    background: #1b1035; color: #fff; }
+  .screen { display: none; position: absolute; inset: 0; flex-direction: column; gap: .7em;
+    padding: max(1em, env(safe-area-inset-top)) 1.2em 1.2em; overflow-y: auto; }
+  .screen.active { display: flex; }
+  h1 { margin: .2em 0; font-size: 2em; text-align: center; color: #ffd166;
+    text-shadow: 3px 3px 0 #7b2cbf, -1px -1px 0 #000; transform: rotate(-2deg); }
+  h1 small { display: block; font-size: .45em; color: #4cc9f0; transform: rotate(1deg); }
+  input, button { font: inherit; font-size: 1.2em; padding: .7em; border-radius: 1em; border: 3px solid #000; width: 100%; }
+  input { background: #2d1b4e; color: #fff; }
+  button { background: #ffd166; color: #1b1035; font-weight: bold; box-shadow: 0 4px 0 #000; cursor: pointer; }
+  button:active { transform: translateY(3px); box-shadow: 0 1px 0 #000; }
+  button.secondary { background: #4cc9f0; }
+  button:disabled { opacity: .5; }
+  .small { color: #bbb; font-size: .9em; text-align: center; }
+  .code { font-size: 2.2em; letter-spacing: .25em; font-weight: bold; color: #ffd166; text-align: center; }
+  .team { border: 3px solid; border-radius: 1em; padding: .5em .8em; background: rgba(0,0,0,.3); }
+  .tname { font-weight: bold; font-size: 1.2em; }
+  .member { display: flex; justify-content: space-between; padding: .15em 0; }
+  .member span { color: #bbb; font-size: .9em; }
+  #myRole { text-align: center; font-size: 1.1em; padding: .6em; background: #7b2cbf; border-radius: 1em; border: 3px solid #000; }
+  #s-game { padding: 0; gap: 0; overflow: hidden; }
+  #cv { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; display: block; }
+  #hud { position: absolute; top: env(safe-area-inset-top); left: 0; right: 0; padding: .5em .8em; pointer-events: none;
+    display: flex; justify-content: space-between; align-items: flex-start; font-size: .95em; }
+  #hudTime { font-size: 1.6em; font-weight: bold; color: #ffd166; text-shadow: 2px 2px 0 #000; }
+  #hudRole { font-size: .8em; color: #ddd; text-shadow: 1px 1px 0 #000; }
+  #board { background: rgba(0,0,0,.45); border-radius: .7em; padding: .3em .6em; min-width: 8em; }
+  #board div { display: flex; justify-content: space-between; gap: .6em; }
+  #center { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; pointer-events: none;
+    font-size: 3em; font-weight: bold; text-align: center; color: #ffd166; text-shadow: 4px 4px 0 #000; padding: 1em; white-space: pre-line; }
+  #mineBtn { position: absolute; right: 1em; bottom: max(1.2em, env(safe-area-inset-bottom)); width: 5.2em; height: 5.2em;
+    border-radius: 50%; font-size: 1.1em; padding: 0; background: #ff5c8a; touch-action: none; line-height: 1.1; }
+  #tentInfo { position: absolute; left: 1em; bottom: max(1.4em, env(safe-area-inset-bottom)); font-size: .85em;
+    background: rgba(0,0,0,.45); padding: .4em .7em; border-radius: .7em; pointer-events: none; }
+  #rotate { display: none; position: absolute; inset: 0; z-index: 99; background: #1b1035; align-items: center;
+    justify-content: center; font-size: 1.5em; text-align: center; padding: 1em; }
+  @media (orientation: landscape) and (max-height: 500px) { #rotate { display: flex; } }
+  ol { padding-left: 1.4em; margin: 0; } li { padding: .2em 0; }
+</style>
+</head>
+<body>
+
+<div id="rotate">📱 Bitte das Handy hochkant halten!</div>
+
+<section id="s-lobby" class="screen active">
+  <h1>Goregoroth's<br>Monster Hunter<small>Fressen oder gefressen werden</small></h1>
+  <input id="name" placeholder="Dein Name" maxlength="12" autocomplete="off">
+  <button onclick="host()">Neues Spiel erstellen</button>
+  <p class="small">– oder –</p>
+  <input id="code" placeholder="Raumcode" maxlength="4" autocapitalize="characters" autocomplete="off">
+  <button class="secondary" onclick="join()">Beitreten</button>
+  <p id="status" class="small"></p>
+  <p class="small">2 Spieler = 1 Monster: einer steuert, einer legt Minen und schießt den Fangarm. Bis zu 8 Spieler.</p>
+</section>
+
+<section id="s-wait" class="screen">
+  <div class="small">Raumcode</div><div class="code" id="showCode"></div>
+  <div id="myRole">…</div>
+  <div id="roster"></div>
+  <div id="hostBtns" style="display:none">
+    <button class="secondary" onclick="shuffleTeams()">🔀 Teams mischen</button>
+    <button id="startBtn" onclick="startGame()">▶ Spiel starten (3 Min)</button>
+  </div>
+  <p id="waitNote" class="small">Warten auf den Host…</p>
+</section>
+
+<section id="s-game" class="screen">
+  <canvas id="cv"></canvas>
+  <div id="hud">
+    <div><div id="hudTime">3:00</div><div id="hudRole"></div></div>
+    <div id="board"></div>
+  </div>
+  <div id="center"></div>
+  <div id="tentInfo"></div>
+  <button id="mineBtn">💣<br><span id="mineCd">Mine</span></button>
+</section>
+
+<section id="s-end" class="screen">
+  <h1>Ende!</h1>
+  <div id="ranking"></div>
+  <h3 style="margin:.3em 0;color:#4cc9f0">🏆 Ewige Bestenliste</h3>
+  <ol id="hsList"></ol>
+  <button id="againBtn" onclick="backToLobby()" style="display:none">Nochmal spielen</button>
+  <p id="endNote" class="small">Warten auf den Host…</p>
+</section>
+
+<script>
+'use strict';
+// ================= Konstanten =================
+const PREFIX = 'goregoroth-', MAX = 8, ROUND = 180, TICK = 50, COUNT = 3;
+const W = 1500, H = 2100, CANDY_N = 80, BASE_MASS = 100, MAX_MINES = 4;
+const MONSTER_NAMES = ['Glibber', 'Zottel', 'Knurps', 'Blubb', 'Schmatz', 'Grummel', 'Fussel', 'Mampf'];
+const COLORS = ['#ff5c8a', '#4cc9f0', '#b5e853', '#ffb703', '#c77dff', '#ff8c42', '#06d6a0', '#f1f1f1'];
+const CANDY_COLORS = ['#ff4d6d', '#ffd166', '#06d6a0', '#4cc9f0', '#c77dff', '#ff9f1c'];
+const $ = id => document.getElementById(id);
+const rnd = (a, b) => a + Math.random() * (b - a);
+const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
+const radiusOf = m => 18 + Math.sqrt(m) * 2.2;
+const speedOf = m => Math.max(90, 230 * Math.pow(BASE_MASS / m, 0.25));
+const d2 = (a, b) => (a.x - b.x) ** 2 + (a.y - b.y) ** 2;
+const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const roleText = r => r === 'pilot' ? '🕹️ Du steuerst die Bewegung' : r === 'gunner' ? '💣 Du legst Minen & schießt den Fangarm' : '🕹️💣 Du machst alles';
+
+// ================= Zustand =================
+let peer = null, isHost = false, hostConn = null, myName = '';
+let me = { tid: -1, role: null, running: false };
+const conns = {}, players = {}; let order = [];   // nur Host
+let setup = { teams: [] };
+let inGame = false, S = null, simTimer = null;
+
+function show(id) { document.querySelectorAll('.screen').forEach(s => s.classList.remove('active')); $(id).classList.add('active'); }
+function setStatus(t) { $('status').textContent = t; }
+async function keepAwake() { try { await navigator.wakeLock?.request('screen'); } catch (e) { } }
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') keepAwake(); });
+
+// ================= Host: Verbindung & Lobby =================
+function host() {
+  myName = ($('name').value.trim() || 'Host').slice(0, 12); isHost = true;
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; let code = '';
+  for (let i = 0; i < 4; i++) code += chars[Math.floor(Math.random() * chars.length)];
+  setStatus('Verbinde mit Server…');
+  peer = new Peer(PREFIX + code);
+  peer.on('open', () => {
+    players.me = { name: myName, tid: -1, role: null }; order = ['me'];
+    $('showCode').textContent = code; $('hostBtns').style.display = 'block';
+    $('waitNote').textContent = 'Sag den Code an. Wenn alle da sind: Spiel starten.';
+    $('againBtn').style.display = 'block'; $('endNote').textContent = '';
+    rebuildTeams(); show('s-wait'); keepAwake();
+  });
+  peer.on('connection', c => {
+    c.on('open', () => {
+      if (Object.keys(conns).length >= MAX - 1) { c.send({ type: 'full' }); setTimeout(() => c.close(), 500); return; }
+      conns[c.peer] = c;
+    });
+    c.on('data', d => handleFromClient(c.peer, d));
+    c.on('close', () => playerLeft(c.peer));
+  });
+  peer.on('error', e => setStatus('Fehler: ' + e.type));
+}
+
+function handleFromClient(id, msg) {
+  if (!msg || typeof msg !== 'object') return;
+  if (msg.type === 'join') {
+    if (players[id]) return;
+    players[id] = { name: String(msg.name || 'Spieler').slice(0, 12), tid: -1, role: null };
+    order.push(id);
+    if (inGame) sendSetupTo(id); else rebuildTeams();
+    return;
+  }
+  const p = players[id]; if (!p || !S || S.state === 'end' || p.tid < 0) return;
+  const T = S.teams.find(t => t.tid === p.tid); if (!T) return;
+  const canMove = p.role !== 'gunner', canShoot = p.role !== 'pilot';
+  if (msg.type === 'in' && canMove) { T.mx = clamp(+msg.x || 0, -1, 1); T.my = clamp(+msg.y || 0, -1, 1); }
+  if (msg.type === 'fire' && canShoot) fireTent(T, +msg.x || 0, +msg.y || 0);
+  if (msg.type === 'mine' && canShoot) dropMine(T);
+}
+
+function playerLeft(id) {
+  delete conns[id]; const p = players[id]; delete players[id]; order = order.filter(o => o !== id);
+  if (!inGame) { rebuildTeams(); return; }
+  if (p && p.tid >= 0) {
+    const rest = Object.keys(players).filter(k => players[k].tid === p.tid);
+    const st = setup.teams.find(t => t.tid === p.tid);
+    if (rest.length) { players[rest[0]].role = 'solo'; if (st) st.members = rest.map(k => players[k].name); }
+    else { if (S) { const T = S.teams.find(t => t.tid === p.tid); if (T) T.gone = true; } setup.teams = setup.teams.filter(t => t.tid !== p.tid); }
+  }
+  sendSetupAll();
+}
+
+function rebuildTeams() {
+  const ids = order.filter(id => players[id]); const teams = [];
+  for (let i = 0; i < ids.length; i += 2) {
+    const a = ids[i], b = ids[i + 1], tid = teams.length;
+    players[a].tid = tid; players[a].role = b ? 'pilot' : 'solo';
+    if (b) { players[b].tid = tid; players[b].role = 'gunner'; }
+    teams.push({ tid, name: MONSTER_NAMES[tid], color: COLORS[tid], members: [players[a].name].concat(b ? [players[b].name] : []) });
+  }
+  setup = { teams }; sendSetupAll();
+}
+function shuffleTeams() { for (let i = order.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [order[i], order[j]] = [order[j], order[i]]; } rebuildTeams(); }
+function setupMsgFor(id) { const p = players[id]; return { type: 'setup', teams: setup.teams, you: { tid: p.tid ?? -1, role: p.role || null }, running: inGame }; }
+function sendSetupTo(id) { if (id === 'me') applySetup(setupMsgFor('me')); else if (conns[id] && conns[id].open) conns[id].send(setupMsgFor(id)); }
+function sendSetupAll() { for (const id in players) sendSetupTo(id); }
+function broadcast(msg) { for (const id in conns) { const c = conns[id]; if (c.open) c.send(msg); } }
+
+// ================= Mitspieler: Verbindung =================
+function join() {
+  myName = ($('name').value.trim() || 'Spieler').slice(0, 12);
+  const code = $('code').value.trim().toUpperCase();
+  if (code.length !== 4) { setStatus('Bitte 4-stelligen Code eingeben'); return; }
+  setStatus('Verbinde mit Server…');
+  peer = new Peer();
+  peer.on('open', () => {
+    setStatus('Suche Raum ' + code + '…');
+    hostConn = peer.connect(PREFIX + code, { reliable: true });
+    hostConn.on('open', () => { hostConn.send({ type: 'join', name: myName }); $('showCode').textContent = code; show('s-wait'); keepAwake(); });
+    hostConn.on('data', d => handleFromHost(d));
+    hostConn.on('close', () => { alert('Verbindung zum Host verloren'); location.reload(); });
+  });
+  peer.on('error', e => setStatus(e.type === 'peer-unavailable' ? 'Raum nicht gefunden' : 'Fehler: ' + e.type));
+}
+function handleFromHost(msg) {
+  if (!msg || typeof msg !== 'object') return;
+  switch (msg.type) {
+    case 'full': alert('Der Raum ist voll (8 Spieler)'); location.reload(); break;
+    case 'setup': applySetup(msg); break;
+    case 'start': onStart(); break;
+    case 'snap': if (inGame) applySnap(msg); break;
+    case 'end': onEnd(msg); break;
+  }
+}
+function sendAction(msg) { if (isHost) handleFromClient('me', msg); else if (hostConn && hostConn.open) hostConn.send(msg); }
+
+// ================= Gemeinsam: Lobby-Anzeige =================
+function applySetup(msg) {
+  setup.teams = msg.teams; me = { tid: msg.you.tid, role: msg.you.role, running: !!msg.running };
+  renderRoster();
+  if (!inGame) show('s-wait');
+}
+function renderRoster() {
+  $('roster').innerHTML = setup.teams.map(t => {
+    const roles = t.members.length === 1 ? ['🕹️💣 alles'] : ['🕹️ steuert', '💣 Minen & Fangarm'];
+    return `<div class="team" style="border-color:${t.color}"><div class="tname" style="color:${t.color}">👾 ${esc(t.name)}</div>` +
+      t.members.map((m, i) => `<div class="member">${esc(m)}<span>${roles[i]}</span></div>`).join('') + '</div>';
+  }).join('') || '<p class="small">Noch niemand da…</p>';
+  const T = setup.teams.find(t => t.tid === me.tid);
+  $('myRole').textContent = !T ? (me.running ? '⏳ Spiel läuft – du bist ab der nächsten Runde dabei' : '…') : `Du bist „${T.name}“ – ${roleText(me.role)}`;
+  $('startBtn').disabled = setup.teams.length === 0;
+}
+
+// ================= Host: Simulation =================
+function startGame() {
+  if (!isHost || inGame || !setup.teams.length) return;
+  inGame = true;
+  S = { t: 0, state: 'count', playStart: 0, nextId: 1, candies: [], mines: [], ev: [], teams: [] };
+  for (const st of setup.teams) {
+    const T = { tid: st.tid, x: 0, y: 0, vx: 0, vy: 0, mx: 0, my: 0, mass: BASE_MASS, alive: true, respawnAt: 0, score: 0, surv: 0,
+      mineCd: 0, tentCd: 0, tent: null, face: 'ok', faceUntil: 0, gone: false };
+    placeRandom(T); S.teams.push(T);
+  }
+  while (S.candies.length < CANDY_N) spawnCandy();
+  broadcast({ type: 'start' }); onStart();
+  clearInterval(simTimer);
+  simTimer = setInterval(hostTick, TICK);
+}
+function hostTick() { if (!S || S.state === 'end') return; simTick(TICK / 1000); if (S.state === 'end') return; const snap = makeSnap(); broadcast(snap); applySnap(snap); }
+function placeRandom(T) {
+  for (let k = 0; k < 20; k++) {
+    T.x = rnd(120, W - 120); T.y = rnd(120, H - 120);
+    if (S.teams.every(o => o === T || !o.alive || d2(o, T) > 350 * 350)) break;
+  }
+}
+function spawnCandy(x, y) {
+  S.candies.push({ id: S.nextId++, x: x ?? rnd(40, W - 40), y: y ?? rnd(40, H - 40), k: Math.floor(rnd(0, CANDY_COLORS.length)) });
+}
+function setFace(T, f, dur) { T.face = f; T.faceUntil = S.t + dur; }
+
+function simTick(dt) {
+  S.t += dt;
+  S.teams = S.teams.filter(t => !t.gone);
+  if (S.state === 'count') { if (S.t >= COUNT) { S.state = 'play'; S.playStart = S.t; } return; }
+  if (ROUND - (S.t - S.playStart) <= 0) { endGame(); return; }
+  for (const T of S.teams) {
+    T.mineCd = Math.max(0, T.mineCd - dt); T.tentCd = Math.max(0, T.tentCd - dt);
+    if (T.face !== 'ok' && S.t > T.faceUntil) T.face = 'ok';
+    if (!T.alive) { if (S.t >= T.respawnAt) respawn(T); continue; }
+    T.surv += dt; if (T.surv >= 1) { T.surv -= 1; T.score += 1; }
+    const sp = speedOf(T.mass), k = Math.min(1, dt * 8);
+    T.vx += (T.mx * sp - T.vx) * k; T.vy += (T.my * sp - T.vy) * k;
+    T.x += T.vx * dt; T.y += T.vy * dt;
+    const r = radiusOf(T.mass);
+    T.x = clamp(T.x, r, W - r); T.y = clamp(T.y, r, H - r);
+    for (let i = S.candies.length - 1; i >= 0; i--) { const c = S.candies[i]; if (d2(T, c) < r * r) eatCandy(T, i); }
+    for (let i = S.mines.length - 1; i >= 0; i--) { const m = S.mines[i]; if (m.tid !== T.tid && S.t >= m.armedAt && d2(T, m) < (r + 12) ** 2) { explode(T, i); break; } }
+    if (T.tent) updateTent(T, dt);
+  }
+  for (let i = 0; i < S.teams.length; i++) for (let j = i + 1; j < S.teams.length; j++) {
+    const A = S.teams[i], B = S.teams[j]; if (!A.alive || !B.alive) continue;
+    const d = Math.sqrt(d2(A, B)), rA = radiusOf(A.mass), rB = radiusOf(B.mass);
+    if (A.mass > B.mass * 1.2 && d < rA - rB * 0.5) eatMonster(A, B);
+    else if (B.mass > A.mass * 1.2 && d < rB - rA * 0.5) eatMonster(B, A);
+  }
+  while (S.candies.length < CANDY_N) spawnCandy();
+}
+function eatCandy(T, i) {
+  const c = S.candies[i]; S.candies.splice(i, 1);
+  T.mass += 8; T.score += 2; S.ev.push({ e: 'candy', x: Math.round(c.x), y: Math.round(c.y), c: c.k });
+}
+function eatMonster(A, B) {
+  A.mass += B.mass * 0.7; A.score += 50 + Math.round(B.mass / 4); setFace(A, 'yum', 1.2);
+  B.alive = false; B.respawnAt = S.t + 3; B.tent = null; B.vx = B.vy = 0;
+  if (A.tent && A.tent.hook === B.tid) A.tent.phase = 'in';
+  S.ev.push({ e: 'eat', x: Math.round(B.x), y: Math.round(B.y), c: B.tid, by: A.tid });
+}
+function respawn(T) { T.alive = true; T.mass = BASE_MASS; T.vx = T.vy = 0; T.tent = null; T.face = 'ok'; placeRandom(T); }
+function dropMine(T) {
+  if (!T.alive || T.mineCd > 0 || S.state !== 'play') return;
+  if (S.mines.filter(m => m.tid === T.tid).length >= MAX_MINES) return;
+  const v = Math.hypot(T.vx, T.vy), dx = v > 5 ? -T.vx / v : 0, dy = v > 5 ? -T.vy / v : 1, r = radiusOf(T.mass);
+  S.mines.push({ x: clamp(T.x + dx * (r + 22), 15, W - 15), y: clamp(T.y + dy * (r + 22), 15, H - 15), tid: T.tid, armedAt: S.t + 1 });
+  T.mineCd = 2.5;
+}
+function explode(T, i) {
+  const m = S.mines[i]; S.mines.splice(i, 1);
+  const lost = T.mass * 0.35; T.mass = Math.max(50, T.mass - lost);
+  const r = radiusOf(T.mass), n = Math.min(8, Math.floor(lost / 8));
+  for (let k = 0; k < n; k++) { const a = rnd(0, Math.PI * 2), d = r + rnd(40, 110); spawnCandy(clamp(T.x + Math.cos(a) * d, 30, W - 30), clamp(T.y + Math.sin(a) * d, 30, H - 30)); }
+  const O = S.teams.find(o => o.tid === m.tid); if (O) O.score += 20;
+  const dx = T.x - m.x, dy = T.y - m.y, dd = Math.hypot(dx, dy) || 1; T.vx = dx / dd * 400; T.vy = dy / dd * 400;
+  setFace(T, 'hit', 1); S.ev.push({ e: 'boom', x: Math.round(m.x), y: Math.round(m.y), v: T.tid });
+}
+function fireTent(T, dx, dy) {
+  if (!T.alive || T.tent || T.tentCd > 0 || S.state !== 'play') return;
+  const l = Math.hypot(dx, dy); if (l < 0.01) return;
+  T.tent = { phase: 'out', len: 0, dx: dx / l, dy: dy / l, max: radiusOf(T.mass) + 320, hook: -1, pullUntil: 0, tx: T.x, ty: T.y };
+}
+function updateTent(T, dt) {
+  const t = T.tent, r = radiusOf(T.mass);
+  if (t.phase === 'out') {
+    t.len += 900 * dt; t.tx = T.x + t.dx * t.len; t.ty = T.y + t.dy * t.len;
+    const tip = { x: t.tx, y: t.ty };
+    for (let i = S.candies.length - 1; i >= 0; i--) if (d2(S.candies[i], tip) < 20 * 20) eatCandy(T, i);
+    for (const O of S.teams) if (O !== T && O.alive && d2(O, tip) < radiusOf(O.mass) ** 2) { t.phase = 'pull'; t.hook = O.tid; t.pullUntil = S.t + 1.0; break; }
+    if (t.phase === 'out' && (t.len >= t.max || t.tx < 0 || t.tx > W || t.ty < 0 || t.ty > H)) t.phase = 'in';
+  } else if (t.phase === 'pull') {
+    const O = S.teams.find(o => o.tid === t.hook);
+    if (!O || !O.alive || S.t > t.pullUntil) { t.phase = 'in'; }
+    else {
+      const dx = T.x - O.x, dy = T.y - O.y, d = Math.hypot(dx, dy) || 1, pull = 380 * dt;
+      const shareO = T.mass / (T.mass + O.mass) * 2, shareT = O.mass / (T.mass + O.mass) * 2;
+      O.x += dx / d * pull * shareO; O.y += dy / d * pull * shareO;
+      T.x -= dx / d * pull * shareT; T.y -= dy / d * pull * shareT;
+      t.tx = O.x; t.ty = O.y; t.len = d; t.dx = -dx / d; t.dy = -dy / d;
+      if (d < r + radiusOf(O.mass) * 0.5) t.phase = 'in';
+    }
+  } else {
+    t.len -= 1100 * dt; t.tx = T.x + t.dx * t.len; t.ty = T.y + t.dy * t.len;
+    if (t.len <= 0) { T.tent = null; T.tentCd = 2; }
+  }
+}
+function makeSnap() {
+  const snap = { type: 'snap', st: S.state, left: S.state === 'count' ? COUNT - S.t : ROUND - (S.t - S.playStart),
+    teams: S.teams.map(T => ({ i: T.tid, x: Math.round(T.x), y: Math.round(T.y), m: Math.round(T.mass), a: T.alive ? 1 : 0, s: T.score, f: T.face,
+      vx: Math.round(T.vx), vy: Math.round(T.vy), mc: +T.mineCd.toFixed(1), tc: +T.tentCd.toFixed(1), rs: T.alive ? 0 : Math.max(0, T.respawnAt - S.t),
+      tip: T.tent ? [Math.round(T.tent.tx), Math.round(T.tent.ty)] : null })),
+    cand: S.candies.map(c => [c.id, Math.round(c.x), Math.round(c.y), c.k]),
+    mines: S.mines.map(m => [Math.round(m.x), Math.round(m.y), m.tid, S.t >= m.armedAt ? 1 : 0]),
+    ev: S.ev };
+  S.ev = []; return snap;
+}
+function endGame() {
+  S.state = 'end'; clearInterval(simTimer); inGame = false;
+  const ranking = S.teams.slice().sort((a, b) => b.score - a.score).map(T => {
+    const st = setup.teams.find(x => x.tid === T.tid) || { name: '?', members: [], color: '#fff' };
+    return { name: st.name, members: st.members, color: st.color, score: T.score }; });
+  let hs = []; try { hs = JSON.parse(localStorage.getItem('goregoroth-hs') || '[]'); } catch (e) { }
+  const d = new Date().toLocaleDateString('de-DE');
+  for (const r of ranking) hs.push({ n: r.name + ' (' + r.members.join(' & ') + ')', s: r.score, d });
+  hs.sort((a, b) => b.s - a.s); hs = hs.slice(0, 10);
+  try { localStorage.setItem('goregoroth-hs', JSON.stringify(hs)); } catch (e) { }
+  const msg = { type: 'end', ranking, hs }; broadcast(msg); onEnd(msg);
+}
+function backToLobby() { if (!isHost) return; S = null; rebuildTeams(); show('s-wait'); }
+
+// ================= Gemeinsam: Spielansicht =================
+const V = { teams: {}, cand: [], mines: [], left: 0, st: 'count', parts: [], texts: [], shake: 0, ready: false };
+let cv, ctx, cw = 0, ch = 0, dpr = 1, rafOn = false, lastFrame = 0;
+const sticks = { move: null, aim: null };
+
+function onStart() {
+  inGame = true; V.teams = {}; V.parts = []; V.texts = []; V.ready = false; V.shake = 0;
+  sticks.move = sticks.aim = null;
+  show('s-game'); resizeCanvas();
+  $('mineBtn').style.display = me.role === 'pilot' ? 'none' : 'block';
+  $('tentInfo').style.display = me.role === 'pilot' ? 'none' : 'block';
+  $('hudRole').textContent = roleText(me.role);
+  if (!rafOn) { rafOn = true; requestAnimationFrame(frame); }
+}
+function onEnd(msg) {
+  inGame = false;
+  $('ranking').innerHTML = msg.ranking.map((r, i) => `<div class="team" style="border-color:${r.color}"><div class="tname" style="color:${r.color}">${['🥇', '🥈', '🥉'][i] || (i + 1) + '.'} ${esc(r.name)} – ${r.score} Punkte</div><div class="small" style="text-align:left">${esc(r.members.join(' & '))}</div></div>`).join('');
+  $('hsList').innerHTML = msg.hs.map(h => `<li>${esc(h.n)} – <b>${h.s}</b> <span class="small">${esc(h.d)}</span></li>`).join('');
+  show('s-end');
+}
+function applySnap(s) {
+  V.ready = true; V.st = s.st; V.left = s.left; V.cand = s.cand; V.mines = s.mines; const seen = {};
+  for (const t of s.teams) {
+    seen[t.i] = 1; let v = V.teams[t.i];
+    const info = setup.teams.find(x => x.tid === t.i) || { name: '?', color: '#fff', members: [] };
+    if (!v || Math.hypot(v.x - t.x, v.y - t.y) > 250) v = V.teams[t.i] = { x: t.x, y: t.y, r: radiusOf(t.m), seed: t.i * 1.7, tipx: 0, tipy: 0, tipWas: 0 };
+    Object.assign(v, { tid: t.i, tx: t.x, ty: t.y, tr: radiusOf(t.m), m: t.m, a: t.a, s: t.s, f: t.f, vx: t.vx, vy: t.vy, mc: t.mc, tc: t.tc, rs: t.rs, tip: t.tip, name: info.name, color: info.color });
+    if (t.tip && !v.tipWas) { v.tipx = t.tip[0]; v.tipy = t.tip[1]; } v.tipWas = t.tip ? 1 : 0;
+  }
+  for (const k in V.teams) if (!seen[k]) delete V.teams[k];
+  for (const e of s.ev) fx(e);
+  updateHud();
+}
+function fx(e) {
+  if (e.e === 'candy') { for (let i = 0; i < 6; i++) V.parts.push({ x: e.x, y: e.y, vx: rnd(-120, 120), vy: rnd(-160, 40), life: .5, c: CANDY_COLORS[e.c] || '#fff', s: rnd(3, 6) }); }
+  if (e.e === 'eat') { const col = COLORS[e.c] || '#fff'; for (let i = 0; i < 26; i++) V.parts.push({ x: e.x, y: e.y, vx: rnd(-300, 300), vy: rnd(-300, 300), life: .9, c: col, s: rnd(5, 12) });
+    V.texts.push({ x: e.x, y: e.y - 40, t: 'MAMPF!', life: 1.2, c: '#ffd166' }); if (e.c === me.tid) V.shake = 12; }
+  if (e.e === 'boom') { for (let i = 0; i < 30; i++) V.parts.push({ x: e.x, y: e.y, vx: rnd(-350, 350), vy: rnd(-350, 350), life: .8, c: i % 3 ? '#ff9f1c' : '#444', s: rnd(4, 11) });
+    V.texts.push({ x: e.x, y: e.y - 30, t: 'BOOM!', life: 1.2, c: '#ff5c8a' }); if (e.v === me.tid) V.shake = 16; }
+}
+function updateHud() {
+  const l = Math.max(0, V.st === 'count' ? ROUND : V.left);
+  $('hudTime').textContent = Math.floor(l / 60) + ':' + String(Math.floor(l % 60)).padStart(2, '0');
+  const list = Object.values(V.teams).sort((a, b) => b.s - a.s).slice(0, 4);
+  $('board').innerHTML = list.map(t => `<div style="color:${t.color}"><span>${esc(t.name)}</span><b>${t.s}</b></div>`).join('');
+  const own = V.teams[me.tid];
+  if (V.st === 'count') $('center').textContent = Math.ceil(V.left) > 0 ? Math.ceil(V.left) : 'LOS!';
+  else if (own && !own.a) $('center').textContent = '😵 Gefressen!\nZurück in ' + Math.ceil(own.rs);
+  else $('center').textContent = '';
+  if (own && me.role !== 'pilot') {
+    $('mineCd').textContent = own.mc > 0 ? own.mc.toFixed(1) : 'Mine'; $('mineBtn').style.opacity = own.mc > 0 ? .45 : 1;
+    $('tentInfo').textContent = own.tc > 0 ? '🐙 Fangarm in ' + own.tc.toFixed(1) : (own.tip ? '🐙 …' : '🐙 Fangarm bereit – ziehen & loslassen');
+  }
+}
+
+// ---------- Rendering ----------
+function resizeCanvas() {
+  cv = cv || $('cv'); ctx = ctx || cv.getContext('2d');
+  dpr = Math.min(2, window.devicePixelRatio || 1); cw = window.innerWidth; ch = window.innerHeight;
+  cv.width = Math.round(cw * dpr); cv.height = Math.round(ch * dpr);
+}
+window.addEventListener('resize', () => { if (inGame) resizeCanvas(); });
+
+function frame(now) {
+  if (!inGame) { rafOn = false; return; }
+  requestAnimationFrame(frame);
+  const dt = Math.min(0.05, (now - lastFrame) / 1000 || 0.016); lastFrame = now; const tm = now / 1000;
+  for (const k in V.teams) { const v = V.teams[k]; v.x += (v.tx - v.x) * .35; v.y += (v.ty - v.y) * .35; v.r += (v.tr - v.r) * .2;
+    if (v.tip) { v.tipx += (v.tip[0] - v.tipx) * .5; v.tipy += (v.tip[1] - v.tipy) * .5; } }
+  V.parts = V.parts.filter(p => (p.life -= dt) > 0); for (const p of V.parts) { p.x += p.vx * dt; p.y += p.vy * dt; p.vy += 300 * dt; }
+  V.texts = V.texts.filter(p => (p.life -= dt) > 0); for (const p of V.texts) p.y -= 40 * dt;
+  V.shake = Math.max(0, V.shake - 30 * dt);
+
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.fillStyle = '#120a26'; ctx.fillRect(0, 0, cw, ch);
+  if (!V.ready) return;
+  const own = V.teams[me.tid]; const camx = own ? own.x : W / 2, camy = own ? own.y : H / 2, ownR = own ? own.r : 40;
+  const scale = clamp(cw / (560 + ownR * 3.5), 0.3, 1.1);
+  const sx = (Math.random() - .5) * V.shake, sy = (Math.random() - .5) * V.shake;
+  ctx.save(); ctx.translate(cw / 2 + sx, ch / 2 + sy); ctx.scale(scale, scale); ctx.translate(-camx, -camy);
+
+  ctx.fillStyle = '#2a1650'; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = 'rgba(255,255,255,.07)'; for (let x = 60; x < W; x += 120) for (let y = 60; y < H; y += 120) { ctx.beginPath(); ctx.arc(x, y, 5, 0, 7); ctx.fill(); }
+  ctx.lineWidth = 12; ctx.strokeStyle = '#ffd166'; ctx.setLineDash([30, 20]); ctx.strokeRect(0, 0, W, H); ctx.setLineDash([]);
+  for (const c of V.cand) drawCandy(c, tm);
+  for (const m of V.mines) drawMine(m, tm);
+  for (const k in V.teams) { const v = V.teams[k]; if (v.a && v.tip) drawTent(v, tm); }
+  const sorted = Object.values(V.teams).sort((a, b) => a.r - b.r);
+  for (const v of sorted) if (v.a) drawMonster(v, tm);
+  for (const p of V.parts) { ctx.globalAlpha = Math.min(1, p.life * 2); ctx.fillStyle = p.c; ctx.beginPath(); ctx.arc(p.x, p.y, p.s, 0, 7); ctx.fill(); } ctx.globalAlpha = 1;
+  for (const p of V.texts) { ctx.font = 'bold 44px "Comic Sans MS", sans-serif'; ctx.textAlign = 'center'; ctx.lineWidth = 8; ctx.strokeStyle = '#000'; ctx.fillStyle = p.c;
+    ctx.globalAlpha = Math.min(1, p.life); ctx.strokeText(p.t, p.x, p.y); ctx.fillText(p.t, p.x, p.y); } ctx.globalAlpha = 1;
+  if (own && own.a && sticks.aim) { const a = stickVec(sticks.aim); if (a.l > .2) { ctx.setLineDash([12, 12]); ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(255,255,255,.7)';
+    ctx.beginPath(); ctx.moveTo(own.x, own.y); ctx.lineTo(own.x + a.x / a.l * (own.r + 320), own.y + a.y / a.l * (own.r + 320)); ctx.stroke(); ctx.setLineDash([]); } }
+  ctx.restore();
+  for (const s of [sticks.move, sticks.aim]) if (s) { ctx.strokeStyle = 'rgba(255,255,255,.4)'; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(s.ox, s.oy, 55, 0, 7); ctx.stroke();
+    const v = stickVec(s); ctx.fillStyle = s === sticks.aim ? 'rgba(255,92,138,.7)' : 'rgba(255,209,102,.7)'; ctx.beginPath(); ctx.arc(s.ox + v.x * 55, s.oy + v.y * 55, 26, 0, 7); ctx.fill(); }
+}
+function drawCandy(c, tm) {
+  const col = CANDY_COLORS[c[3]] || '#fff'; ctx.save(); ctx.translate(c[1], c[2]); ctx.rotate(c[0] % 6 + Math.sin(tm * 2 + c[0]) * .15);
+  ctx.fillStyle = col; ctx.strokeStyle = '#1a1a2e'; ctx.lineWidth = 2.5;
+  ctx.beginPath(); ctx.moveTo(-8, 0); ctx.lineTo(-17, -8); ctx.lineTo(-17, 8); ctx.closePath(); ctx.moveTo(8, 0); ctx.lineTo(17, -8); ctx.lineTo(17, 8); ctx.closePath(); ctx.fill(); ctx.stroke();
+  ctx.beginPath(); ctx.arc(0, 0, 10, 0, 7); ctx.fill(); ctx.stroke();
+  ctx.strokeStyle = 'rgba(255,255,255,.85)'; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.arc(-1, -1, 5, 3.3, 5.6); ctx.stroke(); ctx.restore();
+}
+function drawMine(m, tm) {
+  ctx.save(); ctx.translate(m[0], m[1]); ctx.globalAlpha = m[3] ? 1 : .55;
+  ctx.fillStyle = '#222'; ctx.strokeStyle = COLORS[m[2]] || '#fff'; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(0, 0, 13, 0, 7); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = 'rgba(255,255,255,.35)'; ctx.beginPath(); ctx.arc(-4, -5, 4, 0, 7); ctx.fill();
+  ctx.strokeStyle = '#a77'; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(4, -11); ctx.quadraticCurveTo(10, -22, 16, -18); ctx.stroke();
+  if (m[3] && Math.sin(tm * 12) > 0) { ctx.fillStyle = '#ff3b3b'; ctx.beginPath(); ctx.arc(16, -18, 4, 0, 7); ctx.fill(); }
+  ctx.restore();
+}
+function drawTent(v, tm) {
+  const dx = v.tipx - v.x, dy = v.tipy - v.y, L = Math.hypot(dx, dy) || 1, nx = -dy / L, ny = dx / L;
+  const pts = []; for (let i = 0; i <= 14; i++) { const k = i / 14, w = Math.sin(k * 9 - tm * 14) * 9 * (1 - k) * Math.min(1, L / 100); pts.push([v.x + dx * k + nx * w, v.y + dy * k + ny * w]); }
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  for (const [lw, col] of [[14, '#1a1a2e'], [9, v.color], [3, 'rgba(255,255,255,.5)']]) { ctx.lineWidth = lw; ctx.strokeStyle = col; ctx.beginPath(); pts.forEach((p, i) => i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1])); ctx.stroke(); }
+  ctx.fillStyle = v.color; ctx.strokeStyle = '#1a1a2e'; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(v.tipx, v.tipy, 15, 0, 7); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = '#1a1a2e'; ctx.beginPath(); ctx.arc(v.tipx, v.tipy, 6, 0, 7); ctx.fill();
+}
+function drawMonster(v, tm) {
+  const r = v.r; ctx.save(); ctx.translate(v.x, v.y);
+  ctx.fillStyle = 'rgba(0,0,0,.3)'; ctx.beginPath(); ctx.ellipse(0, r * .95, r * .85, r * .28, 0, 0, 7); ctx.fill();
+  ctx.beginPath(); const n = 28;
+  for (let i = 0; i <= n; i++) { const a = i / n * Math.PI * 2, w = 1 + .06 * Math.sin(a * 5 + tm * 4 + v.seed) + .04 * Math.sin(a * 3 - tm * 3); i ? ctx.lineTo(Math.cos(a) * r * w, Math.sin(a) * r * w) : ctx.moveTo(r * w, 0); }
+  ctx.closePath(); ctx.fillStyle = v.color; ctx.fill(); ctx.lineWidth = Math.max(3, r * .08); ctx.strokeStyle = '#1a1a2e'; ctx.stroke();
+  ctx.fillStyle = '#ffd166'; for (const s of [-1, 1]) { ctx.beginPath(); ctx.moveTo(s * r * .45, -r * .8); ctx.lineTo(s * r * .75, -r * 1.25); ctx.lineTo(s * r * .8, -r * .65); ctx.closePath(); ctx.fill(); ctx.stroke(); }
+  ctx.fillStyle = 'rgba(0,0,0,.12)'; ctx.beginPath(); ctx.arc(-r * .4, r * .35, r * .18, 0, 7); ctx.arc(r * .5, r * .2, r * .12, 0, 7); ctx.fill();
+  ctx.fillStyle = 'rgba(255,255,255,.35)'; ctx.beginPath(); ctx.ellipse(-r * .35, -r * .45, r * .18, r * .1, -.6, 0, 7); ctx.fill();
+  const sp = Math.hypot(v.vx, v.vy), lx = sp > 5 ? v.vx / sp : 0, ly = sp > 5 ? v.vy / sp : 0, er = r * .26;
+  for (const s of [-1, 1]) { const ex = s * r * .38, ey = -r * .25;
+    if (v.f === 'hit') { ctx.strokeStyle = '#1a1a2e'; ctx.lineWidth = r * .08; ctx.beginPath(); ctx.moveTo(ex - er * .6, ey - er * .6); ctx.lineTo(ex + er * .6, ey + er * .6); ctx.moveTo(ex + er * .6, ey - er * .6); ctx.lineTo(ex - er * .6, ey + er * .6); ctx.stroke(); }
+    else if (v.f === 'yum') { ctx.strokeStyle = '#1a1a2e'; ctx.lineWidth = r * .08; ctx.beginPath(); ctx.arc(ex, ey + er * .3, er * .7, Math.PI * 1.15, Math.PI * 1.85); ctx.stroke(); }
+    else { ctx.fillStyle = '#fff'; ctx.strokeStyle = '#1a1a2e'; ctx.lineWidth = r * .05; ctx.beginPath(); ctx.arc(ex, ey, er, 0, 7); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = '#1a1a2e'; ctx.beginPath(); ctx.arc(ex + lx * er * .4, ey + ly * er * .4, er * .5, 0, 7); ctx.fill();
+      ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(ex + lx * er * .4 - er * .18, ey + ly * er * .4 - er * .2, er * .15, 0, 7); ctx.fill(); }
+  }
+  ctx.strokeStyle = '#1a1a2e'; ctx.lineWidth = r * .07; ctx.fillStyle = '#5a0b2e';
+  if (v.f === 'hit') { ctx.beginPath(); ctx.ellipse(0, r * .38, r * .22, r * .28, 0, 0, 7); ctx.fill(); ctx.stroke(); }
+  else { ctx.beginPath(); ctx.moveTo(-r * .5, r * .25); ctx.quadraticCurveTo(0, r * .85, r * .5, r * .25); ctx.quadraticCurveTo(0, r * .45, -r * .5, r * .25); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#fff'; for (let i = -2; i <= 2; i++) { const tx = i * r * .18; ctx.beginPath(); ctx.moveTo(tx - r * .07, r * .3); ctx.lineTo(tx + r * .07, r * .3); ctx.lineTo(tx, r * .48); ctx.closePath(); ctx.fill(); }
+    if (v.f === 'yum') { ctx.fillStyle = '#ff6b9d'; ctx.beginPath(); ctx.ellipse(r * .12, r * .62, r * .14, r * .18, 0, 0, 7); ctx.fill(); } }
+  ctx.restore();
+  ctx.font = 'bold 22px "Comic Sans MS", sans-serif'; ctx.textAlign = 'center'; ctx.lineWidth = 5; ctx.strokeStyle = '#000'; ctx.fillStyle = v.color;
+  const label = (v.tid === me.tid ? '★ ' : '') + v.name + ' · ' + v.m;
+  ctx.strokeText(label, v.x, v.y + v.r + 30); ctx.fillText(label, v.x, v.y + v.r + 30);
+}
+
+// ---------- Steuerung ----------
+function stickVec(s) { let x = (s.x - s.ox) / 55, y = (s.y - s.oy) / 55; const l = Math.hypot(x, y); if (l > 1) { x /= l; y /= l; } return { x, y, l: Math.min(1, l) }; }
+function zoneFor(px) { if (me.role === 'pilot') return 'move'; if (me.role === 'gunner') return 'aim'; return px < cw / 2 ? 'move' : 'aim'; }
+function bindControls() {
+  const c = $('cv');
+  c.addEventListener('pointerdown', e => { e.preventDefault(); if (!inGame || me.tid < 0) return; const z = zoneFor(e.clientX); if (sticks[z]) return;
+    sticks[z] = { id: e.pointerId, ox: e.clientX, oy: e.clientY, x: e.clientX, y: e.clientY }; });
+  c.addEventListener('pointermove', e => { for (const z of ['move', 'aim']) { const s = sticks[z]; if (s && s.id === e.pointerId) { s.x = e.clientX; s.y = e.clientY; } } });
+  const up = e => { for (const z of ['move', 'aim']) { const s = sticks[z]; if (!s || s.id !== e.pointerId) continue; sticks[z] = null;
+    if (z === 'move') sendAction({ type: 'in', x: 0, y: 0 }); else { const v = stickVec(s); if (v.l > .2) sendAction({ type: 'fire', x: v.x, y: v.y }); } } };
+  c.addEventListener('pointerup', up); c.addEventListener('pointercancel', up);
+  setInterval(() => { if (inGame && sticks.move) { const v = stickVec(sticks.move); sendAction({ type: 'in', x: +v.x.toFixed(2), y: +v.y.toFixed(2) }); } }, 66);
+  $('mineBtn').addEventListener('pointerdown', e => { e.preventDefault(); e.stopPropagation(); if (inGame) sendAction({ type: 'mine' }); });
+}
+bindControls();
+</script>
+</body>
+</html>
