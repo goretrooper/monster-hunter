@@ -23,9 +23,9 @@
   button:active { transform: translateY(3px); box-shadow: 0 1px 0 #000; }
   button.secondary { background: #4cc9f0; }
   button:disabled { opacity: .5; }
-  .lenBtns { display: flex; gap: .5em; }
-  .lenBtns button { flex: 1; padding: .5em; }
-  .lenBtns button.sel { background: #b5e853; }
+  .optBtns { display: flex; gap: .5em; }
+  .optBtns button { flex: 1; padding: .5em; font-size: 1em; }
+  .optBtns button.sel { background: #b5e853; }
   .small { color: #bbb; font-size: .9em; text-align: center; }
   .code { font-size: 2.2em; letter-spacing: .25em; font-weight: bold; color: #ffd166; text-align: center; }
   .team { border: 3px solid; border-radius: 1em; padding: .5em .8em; background: rgba(0,0,0,.3); }
@@ -65,18 +65,24 @@
   <input id="code" placeholder="Raumcode" maxlength="4" autocapitalize="characters" autocomplete="off">
   <button class="secondary" onclick="join()">Beitreten</button>
   <p id="status" class="small"></p>
-  <p class="small">2 Spieler = 1 Monster: einer steuert, einer legt Minen und schießt den Fangarm. Bis zu 8 Spieler. Achtung vor Raketen! 🚀</p>
+  <p class="small">Team-Modus: 2 Spieler = 1 Monster (einer steuert, einer legt Minen &amp; schießt den Fangarm). Solo-Modus: jeder sein eigenes Monster. Bis zu 8 Spieler. Achtung vor Raketen! 🚀</p>
 </section>
 
 <section id="s-wait" class="screen">
   <div class="small">Raumcode</div><div class="code" id="showCode"></div>
   <div id="youName" class="small"></div>
+  <div id="modeInfo" class="small"></div>
   <div id="myRole">…</div>
   <div id="roster"></div>
   <div id="hostBtns" style="display:none">
-    <button class="secondary" onclick="shuffleTeams()">🔀 Teams mischen</button>
+    <p class="small" style="margin:.6em 0 .3em">Spielmodus</p>
+    <div class="optBtns">
+      <button class="secondary" id="modeTeams" onclick="setMode('teams')">👥 Teams</button>
+      <button class="secondary" id="modeSolo" onclick="setMode('solo')">👤 Jeder für sich</button>
+    </div>
+    <button class="secondary" id="shuffleBtn" onclick="shuffleTeams()" style="margin-top:.6em">🔀 Teams mischen</button>
     <p class="small" style="margin:.6em 0 .3em">Spieldauer</p>
-    <div class="lenBtns">
+    <div class="optBtns">
       <button class="secondary" id="len3" onclick="setLen(3)">3 Min</button>
       <button class="secondary" id="len4" onclick="setLen(4)">4 Min</button>
       <button class="secondary" id="len5" onclick="setLen(5)">5 Min</button>
@@ -111,8 +117,10 @@
 // ================= Konstanten =================
 const PREFIX = 'goregoroth-', MAX = 8, TICK = 50, COUNT = 3;
 let ROUND = 180;                                   // Spieldauer in Sekunden (Host wählt 3/4/5 Min)
-const W = 1500, H = 2100, CANDY_N = 80, BASE_MASS = 100, MAX_MINES = 4;
-const ROCKET_SPEED = 700, ROCKET_WARN = 1.6, ROCKET_MIN = 12, ROCKET_MAX = 25, ROCKET_PENALTY = 30;
+let MODE = 'teams';                                // 'teams' = 2 Spieler pro Monster, 'solo' = jeder für sich
+const W = 1500, H = 2100, CANDY_N = 80, BASE_MASS = 100, MAX_MINES = 4, BLOCK_N = 4;
+const TENT_R = 42;                                 // Fangradius des Fangarms für Bonbons
+const ROCKET_SPEED = 750, ROCKET_WARN = 1.6, ROCKET_MIN = 9, ROCKET_MAX = 15, ROCKET_PENALTY = 30;
 const MONSTER_NAMES = ['Glibber', 'Zottel', 'Knurps', 'Blubb', 'Schmatz', 'Grummel', 'Fussel', 'Mampf'];
 const COLORS = ['#ff5c8a', '#4cc9f0', '#b5e853', '#ffb703', '#c77dff', '#ff8c42', '#06d6a0', '#f1f1f1'];
 const CANDY_COLORS = ['#ff4d6d', '#ffd166', '#06d6a0', '#4cc9f0', '#c77dff', '#ff9f1c'];
@@ -120,7 +128,7 @@ const $ = id => document.getElementById(id);
 const rnd = (a, b) => a + Math.random() * (b - a);
 const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
 const radiusOf = m => 18 + Math.sqrt(m) * 2.2;
-const speedOf = m => Math.max(60, 230 * Math.pow(BASE_MASS / m, 0.35));   // groß = deutlich langsamer
+const speedOf = m => Math.max(120, 360 * Math.pow(BASE_MASS / m, 0.35));   // Grundtempo 360, groß = langsamer
 const d2 = (a, b) => (a.x - b.x) ** 2 + (a.y - b.y) ** 2;
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const roleText = r => r === 'pilot' ? '🕹️ Du steuerst die Bewegung' : r === 'gunner' ? '💣 Du legst Minen & schießt den Fangarm' : '🕹️💣 Du machst alles';
@@ -153,7 +161,7 @@ function host() {
     $('hostBtns').style.display = 'block'; setLen(3);
     $('waitNote').textContent = 'Sag den Code an. Wenn alle da sind: Spiel starten.';
     $('againBtn').style.display = 'block'; $('endNote').textContent = '';
-    rebuildTeams(); show('s-wait'); keepAwake();
+    setMode('teams'); show('s-wait'); keepAwake();
   });
   peer.on('connection', c => {
     c.on('open', () => {
@@ -170,6 +178,13 @@ function setLen(min) {
   ROUND = min * 60;
   [3, 4, 5].forEach(k => $('len' + k).classList.toggle('sel', k === min));
   $('startBtn').textContent = '▶ Spiel starten (' + min + ' Min)';
+}
+function setMode(m) {
+  if (!isHost || inGame) return;
+  MODE = m === 'solo' ? 'solo' : 'teams';
+  $('modeTeams').classList.toggle('sel', MODE === 'teams'); $('modeSolo').classList.toggle('sel', MODE === 'solo');
+  $('shuffleBtn').style.display = MODE === 'teams' ? 'block' : 'none';
+  rebuildTeams();
 }
 
 function handleFromClient(id, msg) {
@@ -203,8 +218,9 @@ function playerLeft(id) {
 
 function rebuildTeams() {
   const ids = order.filter(id => players[id]); const teams = [];
-  for (let i = 0; i < ids.length; i += 2) {
-    const a = ids[i], b = ids[i + 1], tid = teams.length;
+  const step = MODE === 'solo' ? 1 : 2;
+  for (let i = 0; i < ids.length; i += step) {
+    const a = ids[i], b = step === 2 ? ids[i + 1] : undefined, tid = teams.length;
     players[a].tid = tid; players[a].role = b ? 'pilot' : 'solo';
     if (b) { players[b].tid = tid; players[b].role = 'gunner'; }
     teams.push({ tid, name: MONSTER_NAMES[tid], color: COLORS[tid], members: [players[a].name].concat(b ? [players[b].name] : []) });
@@ -212,7 +228,7 @@ function rebuildTeams() {
   setup = { teams }; sendSetupAll();
 }
 function shuffleTeams() { for (let i = order.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [order[i], order[j]] = [order[j], order[i]]; } rebuildTeams(); }
-function setupMsgFor(id) { const p = players[id]; return { type: 'setup', teams: setup.teams, you: { tid: p.tid ?? -1, role: p.role || null }, running: inGame }; }
+function setupMsgFor(id) { const p = players[id]; return { type: 'setup', teams: setup.teams, mode: MODE, you: { tid: p.tid ?? -1, role: p.role || null }, running: inGame }; }
 function sendSetupTo(id) { if (id === 'me') applySetup(setupMsgFor('me')); else if (conns[id] && conns[id].open) conns[id].send(setupMsgFor(id)); }
 function sendSetupAll() { for (const id in players) sendSetupTo(id); }
 function broadcast(msg) { for (const id in conns) { const c = conns[id]; if (c.open) c.send(msg); } }
@@ -248,11 +264,13 @@ function sendAction(msg) { if (isHost) handleFromClient('me', msg); else if (hos
 
 // ================= Gemeinsam: Lobby-Anzeige =================
 function applySetup(msg) {
-  setup.teams = msg.teams; me = { tid: msg.you.tid, role: msg.you.role, running: !!msg.running };
+  setup.teams = msg.teams; if (msg.mode) MODE = msg.mode;
+  me = { tid: msg.you.tid, role: msg.you.role, running: !!msg.running };
   renderRoster();
   if (!inGame) show('s-wait');
 }
 function renderRoster() {
+  $('modeInfo').textContent = MODE === 'solo' ? 'Modus: 👤 Jeder für sich' : 'Modus: 👥 Teams (2 Spieler pro Monster)';
   $('roster').innerHTML = setup.teams.map(t => {
     const roles = t.members.length === 1 ? ['🕹️💣 alles'] : ['🕹️ steuert', '💣 Minen & Fangarm'];
     return `<div class="team" style="border-color:${t.color}"><div class="tname" style="color:${t.color}">👾 ${esc(t.name)}</div>` +
@@ -266,7 +284,7 @@ function renderRoster() {
 // ================= Host: Simulation =================
 function genBlocks() {
   const out = []; let tries = 0;
-  while (out.length < 4 && tries++ < 300) {
+  while (out.length < BLOCK_N && tries++ < 300) {
     const w = rnd(90, 260), h = rnd(90, 260);
     const b = [Math.round(rnd(150, W - 150 - w)), Math.round(rnd(150, H - 150 - h)), Math.round(w), Math.round(h)];
     if (out.every(o => b[0] > o[0] + o[2] + 200 || b[0] + b[2] + 200 < o[0] || b[1] > o[1] + o[3] + 200 || b[1] + b[3] + 200 < o[1])) out.push(b);
@@ -288,6 +306,12 @@ function pushOutOfBlocks(T, r) {
       if (Math.abs(dx) > Math.abs(dy)) T.vx *= 0.2; else T.vy *= 0.2;
     }
   }
+}
+// Abstand² eines Punktes zu einer Strecke (für den Fangarm: nichts wird übersprungen)
+function segD2(px, py, ax, ay, bx, by) {
+  const dx = bx - ax, dy = by - ay, l2 = dx * dx + dy * dy;
+  const t = l2 > 0 ? clamp(((px - ax) * dx + (py - ay) * dy) / l2, 0, 1) : 0;
+  const qx = ax + dx * t, qy = ay + dy * t; return (px - qx) ** 2 + (py - qy) ** 2;
 }
 
 function startGame() {
@@ -333,13 +357,13 @@ function simTick(dt) {
     if (T.face !== 'ok' && S.t > T.faceUntil) T.face = 'ok';
     if (!T.alive) { if (S.t >= T.respawnAt) respawn(T); continue; }
     T.surv += dt; if (T.surv >= 1) { T.surv -= 1; T.score += 1; }
-    const sp = speedOf(T.mass), k = Math.min(1, dt * 8);
+    const sp = speedOf(T.mass), k = Math.min(1, dt * 16);      // schnelles Ansprechen auf den Stick
     T.vx += (T.mx * sp - T.vx) * k; T.vy += (T.my * sp - T.vy) * k;
     T.x += T.vx * dt; T.y += T.vy * dt;
     const r = radiusOf(T.mass);
     T.x = clamp(T.x, r, W - r); T.y = clamp(T.y, r, H - r);
     pushOutOfBlocks(T, r);
-    for (let i = S.candies.length - 1; i >= 0; i--) { const c = S.candies[i]; if (d2(T, c) < r * r) eatCandy(T, i); }
+    for (let i = S.candies.length - 1; i >= 0; i--) { const c = S.candies[i]; if (d2(T, c) < (r + 8) ** 2) eatCandy(T, i); }
     for (let i = S.mines.length - 1; i >= 0; i--) { const m = S.mines[i]; if (m.tid !== T.tid && S.t >= m.armedAt && d2(T, m) < (r + 12) ** 2) { explode(T, i); break; } }
     if (T.tent) updateTent(T, dt);
   }
@@ -420,13 +444,16 @@ function fireTent(T, dx, dy) {
   const l = Math.hypot(dx, dy); if (l < 0.01) return;
   T.tent = { phase: 'out', len: 0, dx: dx / l, dy: dy / l, max: radiusOf(T.mass) + 320, hook: -1, pullUntil: 0, tx: T.x, ty: T.y };
 }
+function tentSweep(T, ax, ay, bx, by) {      // Bonbons entlang der Strecke der Spitze einsammeln
+  for (let i = S.candies.length - 1; i >= 0; i--) { const c = S.candies[i]; if (segD2(c.x, c.y, ax, ay, bx, by) < TENT_R * TENT_R) eatCandy(T, i); }
+}
 function updateTent(T, dt) {
   const t = T.tent, r = radiusOf(T.mass);
   if (t.phase === 'out') {
+    const ax = t.tx, ay = t.ty;
     t.len += 900 * dt; t.tx = T.x + t.dx * t.len; t.ty = T.y + t.dy * t.len;
-    const tip = { x: t.tx, y: t.ty };
-    for (let i = S.candies.length - 1; i >= 0; i--) if (d2(S.candies[i], tip) < 20 * 20) eatCandy(T, i);
-    for (const O of S.teams) if (O !== T && O.alive && d2(O, tip) < radiusOf(O.mass) ** 2) { t.phase = 'pull'; t.hook = O.tid; t.pullUntil = S.t + 1.0; break; }
+    tentSweep(T, ax, ay, t.tx, t.ty);
+    for (const O of S.teams) if (O !== T && O.alive && segD2(O.x, O.y, ax, ay, t.tx, t.ty) < (radiusOf(O.mass) + 12) ** 2) { t.phase = 'pull'; t.hook = O.tid; t.pullUntil = S.t + 1.0; break; }
     if (t.phase === 'out' && (t.len >= t.max || t.tx < 0 || t.tx > W || t.ty < 0 || t.ty > H || inBlock(t.tx, t.ty, 0))) t.phase = 'in';
   } else if (t.phase === 'pull') {
     const O = S.teams.find(o => o.tid === t.hook);
@@ -440,7 +467,9 @@ function updateTent(T, dt) {
       if (d < r + radiusOf(O.mass) * 0.5) t.phase = 'in';
     }
   } else {
+    const ax = t.tx, ay = t.ty;
     t.len -= 1100 * dt; t.tx = T.x + t.dx * t.len; t.ty = T.y + t.dy * t.len;
+    tentSweep(T, ax, ay, t.tx, t.ty);
     if (t.len <= 0) { T.tent = null; T.tentCd = 2; }
   }
 }
@@ -543,8 +572,8 @@ function frame(now) {
   if (!inGame) { rafOn = false; return; }
   requestAnimationFrame(frame);
   const dt = Math.min(0.05, (now - lastFrame) / 1000 || 0.016); lastFrame = now; const tm = now / 1000;
-  for (const k in V.teams) { const v = V.teams[k]; v.x += (v.tx - v.x) * .35; v.y += (v.ty - v.y) * .35; v.r += (v.tr - v.r) * .2;
-    if (v.tip) { v.tipx += (v.tip[0] - v.tipx) * .5; v.tipy += (v.tip[1] - v.tipy) * .5; } }
+  for (const k in V.teams) { const v = V.teams[k]; v.x += (v.tx - v.x) * .5; v.y += (v.ty - v.y) * .5; v.r += (v.tr - v.r) * .2;
+    if (v.tip) { v.tipx += (v.tip[0] - v.tipx) * .6; v.tipy += (v.tip[1] - v.tipy) * .6; } }
   for (const k of V.rk) if (k[4]) { const x = k[0] ? k[1] : k[2], y = k[0] ? k[2] : k[1];
     V.parts.push({ x: x - (k[0] ? 0 : k[3] * 55), y: y - (k[0] ? k[3] * 55 : 0), vx: rnd(-40, 40), vy: rnd(-40, 40), life: .6, c: 'rgba(210,210,210,.7)', s: rnd(6, 13) }); }
   V.parts = V.parts.filter(p => (p.life -= dt) > 0); for (const p of V.parts) { p.x += p.vx * dt; p.y += p.vy * dt; p.vy += 300 * dt; }
@@ -631,8 +660,8 @@ function drawTent(v, tm) {
   const pts = []; for (let i = 0; i <= 14; i++) { const k = i / 14, w = Math.sin(k * 9 - tm * 14) * 9 * (1 - k) * Math.min(1, L / 100); pts.push([v.x + dx * k + nx * w, v.y + dy * k + ny * w]); }
   ctx.lineCap = 'round'; ctx.lineJoin = 'round';
   for (const [lw, col] of [[14, '#1a1a2e'], [9, v.color], [3, 'rgba(255,255,255,.5)']]) { ctx.lineWidth = lw; ctx.strokeStyle = col; ctx.beginPath(); pts.forEach((p, i) => i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1])); ctx.stroke(); }
-  ctx.fillStyle = v.color; ctx.strokeStyle = '#1a1a2e'; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(v.tipx, v.tipy, 15, 0, 7); ctx.fill(); ctx.stroke();
-  ctx.fillStyle = '#1a1a2e'; ctx.beginPath(); ctx.arc(v.tipx, v.tipy, 6, 0, 7); ctx.fill();
+  ctx.fillStyle = v.color; ctx.strokeStyle = '#1a1a2e'; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(v.tipx, v.tipy, 22, 0, 7); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = '#1a1a2e'; ctx.beginPath(); ctx.arc(v.tipx, v.tipy, 8, 0, 7); ctx.fill();
 }
 function drawMonster(v, tm) {
   const r = v.r; ctx.save(); ctx.translate(v.x, v.y);
@@ -666,7 +695,7 @@ function drawMonster(v, tm) {
 }
 
 // ---------- Steuerung ----------
-function stickVec(s) { let x = (s.x - s.ox) / 55, y = (s.y - s.oy) / 55; const l = Math.hypot(x, y); if (l > 1) { x /= l; y /= l; } return { x, y, l: Math.min(1, l) }; }
+function stickVec(s) { let x = (s.x - s.ox) / 50, y = (s.y - s.oy) / 50; const l = Math.hypot(x, y); if (l > 1) { x /= l; y /= l; } return { x, y, l: Math.min(1, l) }; }
 function zoneFor(px) { if (me.role === 'pilot') return 'move'; if (me.role === 'gunner') return 'aim'; return px < cw / 2 ? 'move' : 'aim'; }
 function bindControls() {
   const c = $('cv');
@@ -676,7 +705,7 @@ function bindControls() {
   const up = e => { for (const z of ['move', 'aim']) { const s = sticks[z]; if (!s || s.id !== e.pointerId) continue; sticks[z] = null;
     if (z === 'move') sendAction({ type: 'in', x: 0, y: 0 }); else { const v = stickVec(s); if (v.l > .2) sendAction({ type: 'fire', x: v.x, y: v.y }); } } };
   c.addEventListener('pointerup', up); c.addEventListener('pointercancel', up);
-  setInterval(() => { if (inGame && sticks.move) { const v = stickVec(sticks.move); sendAction({ type: 'in', x: +v.x.toFixed(2), y: +v.y.toFixed(2) }); } }, 66);
+  setInterval(() => { if (inGame && sticks.move) { const v = stickVec(sticks.move); sendAction({ type: 'in', x: +v.x.toFixed(2), y: +v.y.toFixed(2) }); } }, 40);
   $('mineBtn').addEventListener('pointerdown', e => { e.preventDefault(); e.stopPropagation(); if (inGame) sendAction({ type: 'mine' }); });
 }
 bindControls();
