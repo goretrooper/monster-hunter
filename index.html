@@ -5,7 +5,26 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <title>Goregoroth's Monster Hunter</title>
-<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script>
+(function(){
+ var cdns=['https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js','https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js'];
+ var i=0;
+ function report(t){var s=document.getElementById('status');if(s)s.textContent=t;}
+ function load(){
+  if(i>=cdns.length){report('⚠️ Spiel-Bibliothek konnte nicht geladen werden. Werbeblocker / Privat-Relay aus und Seite neu laden.');return;}
+  var s=document.createElement('script');s.src=cdns[i++];
+  s.onload=function(){if(typeof Peer==='undefined')load();};s.onerror=load;document.head.appendChild(s);
+ }
+ load();
+ window.addEventListener('error',function(e){report('⚠️ Fehler: '+(e.message||e.type));});
+ window.addEventListener('unhandledrejection',function(e){report('⚠️ Fehler: '+((e.reason&&e.reason.message)||e.reason));});
+ var since=0;
+ setInterval(function(){var s=document.getElementById('status');if(!s)return;var t=s.textContent||'';
+  if(t.indexOf('Verbinde mit Server')===0){since++;
+   if(since===8)s.textContent=(typeof Peer==='undefined')?'⚠️ Bibliothek nicht geladen – Werbeblocker oder iCloud Privat-Relay ausschalten, dann Seite neu laden.':'⏳ Server antwortet nicht. Privat-Relay aus, WLAN↔Mobilfunk wechseln, Seite neu laden.';
+  }else since=0;},1000);
+})();
+</script>
 <style>
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   html, body { margin: 0; height: 100%; overflow: hidden; position: fixed; width: 100%;
